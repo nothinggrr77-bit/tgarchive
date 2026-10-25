@@ -19,9 +19,11 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import shutil
 import sqlite3
 import tarfile
+import tempfile
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
@@ -51,6 +53,8 @@ FORMAT_VERSION = 1
 COMPRESS_LEVEL = 6
 STALE_TMP = timedelta(hours=6)
 _STAMP = "%Y%m%d-%H%M%S"
+# tgarchive-YYYYmmdd-HHMMSS[-N].tar.gz[.age] — bir soniyada bir nechta zaxira bo'lsa, -2, -3 ...
+_NAME_RE = re.compile(r"^tgarchive-(\d{8}-\d{6})(?:-(\d+))?(\.tar\.gz(?:\.age)?)$")
 
 
 class BackupError(Exception):
@@ -63,6 +67,7 @@ class BackupInfo:
     created_at: datetime
     size: int
     encrypted: bool
+    seq: int = 0  # bir soniyadagi tartib raqami
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,24 +86,22 @@ def _stamp(now: datetime) -> str:
 
 
 def parse_backup_name(path: Path) -> BackupInfo | None:
-    name = path.name
-    if not name.startswith(PREFIX):
+    match = _NAME_RE.match(path.name)
+    if match is None:
         return None
-    for suffix, encrypted in ((AGE_SUFFIX, True), (PLAIN_SUFFIX, False)):
-        if name.endswith(suffix):
-            try:
-                created = datetime.strptime(name[len(PREFIX) : -len(suffix)], _STAMP).replace(tzinfo=UTC)
-            except ValueError:
-                return None
-            return BackupInfo(path, created, path.stat().st_size if path.exists() else 0, encrypted)
-    return None
+    try:
+        created = datetime.strptime(match[1], _STAMP).replace(tzinfo=UTC)
+    except ValueError:
+        return None
+    size = path.stat().st_size if path.exists() else 0
+    return BackupInfo(path, created, size, match[3].endswith(".age"), int(match[2] or 0))
 
 
 def list_backups(root: Path) -> list[BackupInfo]:
     if not root.exists():
         return []
     items = [info for p in root.iterdir() if p.is_file() and (info := parse_backup_name(p))]
-    return sorted(items, key=lambda i: i.created_at, reverse=True)
+    return sorted(items, key=lambda i: (i.created_at, i.seq), reverse=True)
 
 
 def prune_backups(root: Path, keep: int) -> list[Path]:
@@ -198,7 +201,8 @@ def _encrypt_to(out: IO[bytes], recipients: list[Any], produce: Callable[[IO[byt
 def create_backup(settings: ArchiverSettings, *, now: datetime | None = None) -> BackupInfo:
     now = now or utcnow()
     root = ensure_private_dir(settings.paths.backups)
-    work = ensure_private_dir(ensure_private_dir(root / TMP_DIR) / _stamp(now))
+    # Har jarayonga alohida katalog: bir paytdagi ikki zaxira bir-birini buzmasin
+    work = Path(tempfile.mkdtemp(prefix=f"{_stamp(now)}-", dir=ensure_private_dir(root / TMP_DIR)))
     try:
         files: list[tuple[str, Path]] = []
         db_copy = work / "archive.sqlite3"
@@ -222,7 +226,12 @@ def create_backup(settings: ArchiverSettings, *, now: datetime | None = None) ->
             "encrypted": bool(recipients),
             "recipients": [r.strip() for r in settings.backup_age_recipients],
         }
-        name = f"{PREFIX}{_stamp(now)}{AGE_SUFFIX if recipients else PLAIN_SUFFIX}"
+        suffix = AGE_SUFFIX if recipients else PLAIN_SUFFIX
+        name = f"{PREFIX}{_stamp(now)}{suffix}"
+        seq = 1
+        while (root / name).exists():  # shu soniyada boshqa zaxira bor — ustidan yozilmasin
+            seq += 1
+            name = f"{PREFIX}{_stamp(now)}-{seq}{suffix}"
         part = work / f"{name}.part"
         with open(part, "wb") as out:
             if recipients:
@@ -235,10 +244,30 @@ def create_backup(settings: ArchiverSettings, *, now: datetime | None = None) ->
             os.chmod(final, 0o600)
         prune_backups(root, settings.backup_keep)
         info = parse_backup_name(final)
-        assert info is not None
+        if info is None:  # nom PREFIX/suffiks bilan yasalgan — bo'lishi mumkin emas
+            raise BackupError(f"zaxira nomi tanilmadi: {final.name}")
+        # Holat shu yerda (fayl bilan birga) yoziladi: xizmat shu payt to'xtasa ham status to'g'ri qoladi
+        record_backup_meta(settings.paths.db, info, now, settings.db_busy_timeout_ms)
         return info
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def backup_meta(info: BackupInfo, now: datetime) -> dict[str, Any]:
+    return {"at": now.isoformat(), "file": info.path.name, "size": info.size, "encrypted": info.encrypted}
+
+
+def record_backup_meta(db_path: Path, info: BackupInfo, now: datetime, busy_timeout_ms: int) -> None:
+    """``app_meta.last_backup`` ni yozadi (``status`` va bot ``/status`` shuni o'qiydi)."""
+    value = json.dumps(backup_meta(info, now), ensure_ascii=False, sort_keys=True)
+    stamp = now.astimezone(UTC).replace(tzinfo=None).isoformat(sep=" ")
+    with closing(sqlite3.connect(db_path, timeout=busy_timeout_ms / 1000)) as conn:
+        conn.execute(
+            "INSERT INTO app_meta (key, value, updated_at) VALUES ('last_backup', ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            (value, stamp),
+        )
+        conn.commit()
 
 
 # ------------------------------------------------------- o'qish va tiklash
@@ -308,7 +337,7 @@ def extract_backup(path: Path, identities: list[Any] | None, dest: Path) -> dict
 
 
 def verify_backup(path: Path, identities: list[Any] | None, *, work_root: Path) -> dict[str, Any]:
-    work = work_root / TMP_DIR / f"verify-{_stamp(utcnow())}"
+    work = Path(tempfile.mkdtemp(prefix="verify-", dir=ensure_private_dir(work_root / TMP_DIR)))
     try:
         return extract_backup(path, identities, work)
     finally:
@@ -329,7 +358,7 @@ def restore_backup(
     now = now or utcnow()
     stamp = _stamp(now)
     paths = settings.paths
-    work = ensure_private_dir(ensure_private_dir(paths.backups / TMP_DIR) / f"restore-{stamp}")
+    work = Path(tempfile.mkdtemp(prefix="restore-", dir=ensure_private_dir(paths.backups / TMP_DIR)))
     try:
         manifest = extract_backup(path, identities, work)
         moved: list[Path] = []

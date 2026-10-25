@@ -708,6 +708,15 @@ def _cmd_retention(args: argparse.Namespace) -> int:
     return asyncio.run(_retention(args, settings))
 
 
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    from tgarchive.doctor import run_doctor
+
+    report = asyncio.run(run_doctor(args.env_file, component=args.component, offline=args.offline))
+    print(f"tgarchive {__version__} — doctor ({utcnow():%Y-%m-%d %H:%M} UTC)")
+    print(report.render())
+    return EXIT_RUNTIME if report.failures else EXIT_OK
+
+
 # ----------------------------------------------------------------------- main
 
 
@@ -787,6 +796,11 @@ def _build_parser() -> argparse.ArgumentParser:
     ret_set.add_argument("chat_id", type=int)
     ret_set.add_argument("days", help="kunlar soni yoki off")
     retention.set_defaults(handler=_cmd_retention)
+
+    doctor = sub.add_parser("doctor", help="barcha sozlamalar va ulanishlarni tekshirish (o'zgartirmaydi)")
+    doctor.add_argument("--component", choices=("auto", "archiver", "bot", "all"), default="auto")
+    doctor.add_argument("--offline", action="store_true", help="Telegram'ga ulanmasdan")
+    doctor.set_defaults(handler=_cmd_doctor)
     return parser
 
 

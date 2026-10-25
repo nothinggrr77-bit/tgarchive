@@ -298,3 +298,23 @@ def test_identity_from_stdin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ca
     capsys.readouterr()
     assert main([*base, "backup", "verify", name, "--identity", "-"]) == EXIT_OK
     assert "Zaxira butun" in capsys.readouterr().out
+
+
+async def test_backup_status_is_recorded_together_with_the_file(archived: ArchiverSettings, db: Database) -> None:
+    """Xizmat zaxira tugashi bilan to'xtasa ham (async qism bekor bo'lsa) holat yozilgan bo'lishi kerak."""
+    info = create_backup(archived, now=T0)  # Maintenance'siz, to'g'ridan-to'g'ri
+    async with db.read() as session:
+        meta = await get_json_meta(session, LAST_BACKUP_KEY)
+    assert meta == {"at": T0.isoformat(), "file": info.path.name, "size": info.size, "encrypted": False}
+
+
+async def test_two_backups_in_the_same_second_do_not_overwrite(archived: ArchiverSettings) -> None:
+    first = create_backup(archived, now=T0)
+    second = create_backup(archived, now=T0)
+    third = create_backup(archived, now=T0)
+    assert [first.path.name, second.path.name, third.path.name] == [
+        "tgarchive-20261025-033000.tar.gz",
+        "tgarchive-20261025-033000-2.tar.gz",
+        "tgarchive-20261025-033000-3.tar.gz",
+    ]
+    assert [b.path.name for b in list_backups(archived.paths.backups)][0] == third.path.name  # eng oxirgisi birinchi

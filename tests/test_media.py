@@ -18,14 +18,7 @@ from factories import at, sqlite_url
 from fake_telegram import FakeClock, FakeTelegram, RecordingSleep
 from tgarchive.archiver.dialogs import sync_dialogs
 from tgarchive.archiver.history import HistoryImporter
-from tgarchive.archiver.media import (
-    RETRY_S,
-    MediaWorker,
-    classify,
-    media_extension,
-    media_relpath,
-    resolve_media_path,
-)
+from tgarchive.archiver.media import RETRY_S, MediaWorker, classify
 from tgarchive.archiver.service import ArchiverService
 from tgarchive.cli import main
 from tgarchive.config import ArchiverSettings
@@ -35,6 +28,7 @@ from tgarchive.db.media import FetchRefused, list_large_files, media_summary, re
 from tgarchive.db.migrate import upgrade
 from tgarchive.db.models import Chat, Media, MediaTrash, Message
 from tgarchive.exitcodes import EXIT_OK, EXIT_RUNTIME
+from tgarchive.mediafiles import media_extension, media_relpath, resolve_media_path
 from tl_objects import ALI_ID, CHANNEL_RAW_ID, ME_ID, channel, document_media, message, photo_media, user
 
 VALID_HASH = "0123456789abcdef0123456789abcdef"

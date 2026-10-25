@@ -82,64 +82,78 @@ cd ~/tgarchive
 
 ---
 
-## 4. Konfiguratsiya (`.env`)
+## 4. Sozlash va ishga tushirish — bitta buyruq (tavsiya)
+
+Oldindan tayyorlang:
+- my.telegram.org → **api_id** va **api_hash**;
+- @BotFather → **bot tokeni**;
+- **OWNER_ID** (bilmasangiz, keyin qo'shasiz — [09-bot.md](09-bot.md));
+- zaxira uchun **age ochiq kaliti** (ixtiyoriy — [10-backup-export.md](10-backup-export.md)).
 
 ```bash
-cp .env.example .env
-chmod 600 .env
-nano .env
+cd ~/tgarchive
+bash scripts/setup.sh
 ```
 
-Majburiy: `TG_API_ID`, `TG_API_HASH` (archiver), `BOT_TOKEN`, `OWNER_ID` (bot — qanday olish: [09-bot.md](09-bot.md)).
-Bot sozlanmagan bo‘lsa, archiver baribir ishlaydi; bot konteyneri esa xato bilan qayta-qayta ishga tushadi —
-`docker compose logs bot` da sababi ko‘rinadi.
-Yo‘llar (`DATA_DIR`, `DB_PATH`, …) Docker'da `docker-compose.yml` tomonidan belgilanadi — ularni o‘zgartirmang.
+Skript nima qiladi:
+1. Docker va Compose borligini tekshiradi.
+2. `.env` ni yaratadi (`chmod 600`) va yo'q qiymatlarni **format tekshiruvi bilan** so'raydi. Maxfiy qiymatlar ekranda ko'rinmaydi.
+3. Image yig'adi (`docker compose build`).
+4. **`doctor`** — barcha ulanish nuqtalarini tekshiradi (pastga qarang).
+5. Session yo'q bo'lsa — **login**: telefon raqam, Telegram ilovangizga kelgan kod, (bo'lsa) 2FA parol.
+6. Xizmatlarni ishga tushiradi. `OWNER_ID` hali yo'q bo'lsa — faqat archiver ishga tushadi.
 
----
+Skriptni qayta ishga tushirish xavfsiz: tayyor qiymatlarga tegmaydi, session yaroqli bo'lsa login so'ramaydi.
+Masalan, `OWNER_ID` ni keyin `.env` ga yozib, skriptni yana bir marta ishga tushirasiz.
 
-## 5. Birinchi ishga tushirish
+Login kodini hech kimga yubormang va forward qilmang — Telegram forward qilingan kodni bloklaydi.
+
+### doctor — ulanishlarni tekshirish
 
 ```bash
+docker compose run --rm --no-deps -T archiver doctor
+docker compose run --rm --no-deps -T bot doctor
+```
+
+```
+[umumiy]
+  ✅ SQLite: 3.46.1, FTS5 bor
+  ✅ Baza: /data/db/archive.sqlite3, migratsiya 0004, butun
+[archiver]
+  ✅ Kataloglar: yozish mumkin: db, media, exports, backups, session
+  ✅ TG_API_ID/TG_API_HASH: Telegram tasdiqladi
+  ✅ Session: Ism (id 123456789, @username)
+  ✅ Zaxira: har 24 soatda, age bilan shifrlanadi, 7 ta saqlanadi
+[bot]
+  ✅ BOT_TOKEN: @mening_arxiv_botim
+  ✅ OWNER_ID: 987654321 (Ism) — botga /start yuborgan
+Natija: 0 xato, 0 ogohlantirish
+```
+
+- `doctor` ma'lumotlarni o'zgartirmaydi.
+- API_ID/API_HASH QR-login tokeni so'rovi orqali tekshiriladi: telefonga kod bormaydi, hech kimga xabar yuborilmaydi.
+- Archiver ishlab turgan bo'lsa, session'ga tegilmaydi — holati heartbeat'dan olinadi.
+- Har bir ❌ qatorda nima qilish kerakligi yozilgan.
+
+## 5. Qo'lda sozlash (skriptsiz)
+
+```bash
+cp .env.example .env && chmod 600 .env && nano .env      # TG_API_ID, TG_API_HASH, BOT_TOKEN, OWNER_ID
 docker compose build
-docker compose run --rm archiver check-config --component archiver
-```
-
-Kutiladigan natija: `[archiver] OK`, `TG_API_HASH  o'rnatilgan (yashirin)`.
-
-**Kirish (bir marta):**
-
-```bash
-docker compose run --rm archiver login
-```
-
-Telefon raqam → Telegram ilovangizga kelgan kod → (bo‘lsa) 2FA parol. Kutiladigan natija:
-
-```
-Yangi session yaratildi: Ism (id=123456789, @username)
-Telegram -> Settings -> Devices ro'yxatida 'tgarchive' qurilmasi ko'rinadi.
-```
-
-Kodni hech kimga yubormang va forward qilmang — Telegram forward qilingan kodni bloklaydi.
-
-**Rejani ko‘rish (ixtiyoriy):**
-
-```bash
-docker compose run --rm archiver dialogs
-```
-
-Har chat uchun rejim: `full` (to‘liq), `window20` (kanal: oxirgi 20 post), `skip`.
-
-**Doimiy ishga tushirish:**
-
-```bash
+docker compose run --rm --no-deps -T archiver doctor
+docker compose run --rm archiver login                    # bir marta
 docker compose up -d
-docker compose ps                     # ~1 daqiqadan keyin: Up ... (healthy)
-docker compose logs -f archiver       # Ctrl+C — faqat log ko'rishni to'xtatadi
+docker compose ps                                         # ~1 daqiqadan keyin: Up ... (healthy)
 docker compose exec archiver python -m tgarchive status
 ```
 
+Yo'llar (`DATA_DIR`, `DB_PATH`, …) Docker'da `docker-compose.yml` tomonidan belgilanadi — ularni o'zgartirmang.
+Rejani ko'rish (ixtiyoriy, archiver to'xtatilgan holda): `docker compose run --rm archiver dialogs`.
+
 Birinchi import hajmga qarab bir necha soatdan bir necha kungacha davom etishi mumkin (FloodWait
-cheklovlari). Bu normal. Jarayon `status` da ko‘rinadi va istalgan payt to‘xtatilsa, to‘xtagan joyidan davom etadi.
+cheklovlari). Bu normal. Jarayon `status` da ko'rinadi va istalgan payt to'xtatilsa, to'xtagan joyidan davom etadi.
+Birinchi avtomatik zaxira xizmat ishga tushishi bilan olinadi. Katta import tugagach, qo'lda yana bittasini oling:
+`docker compose exec archiver python -m tgarchive backup create`.
 
 ---
 
@@ -223,7 +237,8 @@ docker compose exec archiver python -m tgarchive status        # "Zaxira: oxirgi
 
 | Belgi | Sabab va yechim |
 |---|---|
-| `env file .env not found` | `cp .env.example .env` (4-qadam) |
+| Nima ishlamayotgani noma'lum | `docker compose run --rm --no-deps -T archiver doctor` (va `bot doctor`) — har bir ❌ yonida yechim |
+| `env file .env not found` | `bash scripts/setup.sh` yoki `cp .env.example .env` |
 | `[archiver] XATO ... TG_API_HASH` | `.env` dagi qiymat my.telegram.org dagi 32 belgili hash emas |
 | `Kirish amalga oshmadi: juda ko'p urinish` | Telegram cheklovi — ko‘rsatilgan vaqtdan keyin qayta urinib ko‘ring |
 | `Bu baza boshqa akkauntga bog'langan` | Boshqa raqam bilan login qilindi; har akkaunt uchun alohida papka/klon kerak |
@@ -236,4 +251,4 @@ docker compose exec archiver python -m tgarchive status        # "Zaxira: oxirgi
 - Real vaqt ishlaydi (yangi xabarlar, tahrirlar, o‘chirishlar). Archiver o‘chiq bo‘lgan paytdagi o‘chirishlar faqat Telegram qayta ulanishda bergan bo‘lsa qayd etiladi — [07-realtime.md](07-realtime.md).
 - Media: 50 MB gacha fayllar yuklanadi; kattalari ro‘yxatda ko‘rinadi ([08-media.md](08-media.md)). Disk to‘lib qolmasligi uchun `MEDIA_MIN_FREE_GB` (5 GB) himoyasi bor.
 - Zaxira faqat server diskida bo'lsa, disk nosozligidan himoya qilmaydi — haftada bir marta o'z kompyuteringizga ko'chiring ([10-backup-export.md](10-backup-export.md)).
-- Docker build va compose fayl bu yerda (Windows'da Docker yo‘q) haqiqiy Docker bilan **ishga tushirilmagan**: image muhiti taqlid qilinib tekshirilgan (lock'dan o‘rnatish, Linux wheel'lari, `PYTHONPATH` rejimi, compose sintaksisi). Serverdagi birinchi `docker compose build` — haqiqiy tekshiruv.
+- Docker build va compose fayl ishlab chiqish kompyuterida (Windows'da Docker yo‘q) haqiqiy Docker bilan **ishga tushirilmagan**: image muhiti taqlid qilinib tekshirilgan (lock'dan o‘rnatish, Linux wheel'lari, `PYTHONPATH` rejimi, compose sintaksisi), `setup.sh` esa soxta `docker` bilan sinalgan. Serverdagi birinchi `bash scripts/setup.sh` — haqiqiy tekshiruv; muammo bo'lsa, chiqishini yuboring.

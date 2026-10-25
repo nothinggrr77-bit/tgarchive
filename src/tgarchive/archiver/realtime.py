@@ -277,8 +277,10 @@ class RealtimeArchiver:
         except (ValueError, errors.FloodWaitError, ConnectionError, TimeoutError, *INACCESSIBLE_ERRORS) as exc:
             log.info("deletion_verify_deferred", chat_id=chat_id, error=type(exc).__name__)
             return
-        gone = [mid for mid, msg in zip(message_ids, found) if msg is None or isinstance(msg, types.MessageEmpty)]
-        alive = [mid for mid, msg in zip(message_ids, found) if mid not in gone]
+        # strict: Telegram javobi so'ralgan ID'larga mos kelmasa — taxmin qilmasdan xato
+        pairs = list(zip(message_ids, found, strict=True))
+        gone = [mid for mid, msg in pairs if msg is None or isinstance(msg, types.MessageEmpty)]
+        alive = [mid for mid, _ in pairs if mid not in gone]
         async with self.db.write() as session:
             if gone:
                 await apply_deletions(session, gone, chat_id=chat_id, source=DeletionSource.VERIFICATION)

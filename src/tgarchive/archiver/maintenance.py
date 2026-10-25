@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from tgarchive.archiver.history import Sleep
-from tgarchive.backup import BackupInfo, clean_stale_tmp, create_backup
+from tgarchive.backup import BackupInfo, backup_meta, clean_stale_tmp, create_backup
 from tgarchive.config import ArchiverSettings
 from tgarchive.db.engine import Database
 from tgarchive.db.meta import LAST_BACKUP_KEY, LAST_RETENTION_KEY, get_json_meta, set_json_meta
@@ -87,11 +87,11 @@ class Maintenance:
             self.last_error_at = now
             log.exception("backup_failed")
             await self._record(now, ok=False, error=f"{type(exc).__name__}: {exc}"[:300])
-            return None
-        finally:
             self.state = "idle"
+            return None
         self.last_error_at = None
         await self._record(now, ok=True, info=info)
+        self.state = "idle"
         log.info("backup_created", file=info.path.name, size=info.size, encrypted=info.encrypted)
         if not info.encrypted:
             log.warning("backup_not_encrypted", hint="BACKUP_AGE_RECIPIENTS ga age ochiq kalitini yozing")
@@ -101,12 +101,7 @@ class Maintenance:
         async with self.db.write() as session:
             meta: dict[str, Any] = await get_json_meta(session, LAST_BACKUP_KEY) or {}
             if ok and info is not None:
-                meta = {
-                    "at": now.isoformat(),
-                    "file": info.path.name,
-                    "size": info.size,
-                    "encrypted": info.encrypted,
-                }
+                meta = backup_meta(info, now)
                 await add_audit(
                     session, "backup_created", target=info.path.name, details={"size": info.size, "encrypted": info.encrypted}
                 )

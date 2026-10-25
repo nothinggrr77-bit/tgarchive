@@ -50,7 +50,7 @@ from tgarchive.db.store import ChatInfo
 from tgarchive.db.types import utcnow
 from tgarchive.fs import ensure_private_dir
 from tgarchive.logging_setup import get_logger
-from tgarchive.mediafiles import hash_file, media_extension, media_relpath, resolve_media_path
+from tgarchive.mediafiles import hash_file, media_relpath, resolve_media_path
 from tgarchive.policy import media_decision
 
 log = get_logger(__name__)

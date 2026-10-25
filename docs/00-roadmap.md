@@ -12,8 +12,8 @@
 | 8 | Media arxivi | ✅ | 50 MB chegara, katta fayllar ro‘yxati va `fetch`, takrorsiz yuklash, disk nazorati, sha256, yetishmayotgan fayllar, `media_trash` — [08-media.md](08-media.md) |
 | 9 | Admin bot va qidiruv | ✅ | aiogram bot (faqat OWNER_ID, faqat shaxsiy chat), qidiruv filtrlari, sahifalash, xabar tafsiloti, katta fayllarni yuklatish, alohida Docker xizmati — [09-bot.md](09-bot.md) |
 | 10 | Audit, eksport, backup | ✅ | kunlik age-shifrlangan zaxira, tekshirish va tiklash, HTML/JSON eksport (/export), /audit, retention mexanizmi — [10-backup-export.md](10-backup-export.md) |
-| 11 | Testlar va xatolarni tuzatish | ⏭ keyingi | integratsion testlar (alohida test akkaunt), xato ssenariylari |
-| 12 | Deploy | 🟡 asosiy qismi tayyor | Dockerfile, docker-compose.yml (archiver + bot), [deploy.md](deploy.md); serverdagi birinchi haqiqiy build va yakuniy tekshiruv |
+| 11 | Testlar va xatolarni tuzatish | 🟡 asosiy qismi | uchdan-uchgacha test (archiver + media + zaxira + bot + eksport + tiklash), `tgarchive doctor`, jonli ulanish tekshiruvi, statik tahlil, topilgan xatolar tuzatildi; haqiqiy akkaunt bilan sinov — serverda `doctor` orqali |
+| 12 | Deploy | 🟡 serverda ishga tushirish | Dockerfile, docker-compose.yml (archiver + bot), `scripts/setup.sh`, [deploy.md](deploy.md) |
 | 13 | Monitoring, xavfsizlik auditi, yakuniy hujjatlar | ⏳ | ogohlantirishlar, xavfsizlik checklist (healthcheck allaqachon bor) |
 
 Egasi qarorlari: [01-requirements.md, 1.6](01-requirements.md#16-egasi-qarorlari-2026-10-25).
@@ -22,11 +22,11 @@ Egasi qarorlari: [01-requirements.md, 1.6](01-requirements.md#16-egasi-qarorlari
 
 ```
 .gitignore  .gitattributes  .dockerignore  .env.example  pyproject.toml  requirements.txt  requirements-dev.txt
-alembic.ini  README.md  Dockerfile  docker-compose.yml
+alembic.ini  README.md  Dockerfile  docker-compose.yml  scripts/setup.sh
 docs/       00-roadmap.md  01-requirements.md  02-architecture.md  03-data-model.md  05-account.md  06-history.md
             07-realtime.md  08-media.md  09-bot.md  10-backup-export.md  deploy.md  telegram-limits.md
 src/tgarchive/
-  __init__.py  __main__.py  backup.py  cli.py  config.py  crypto.py  exitcodes.py  export.py  fs.py
+  __init__.py  __main__.py  backup.py  cli.py  config.py  crypto.py  doctor.py  exitcodes.py  export.py  fs.py
   logging_setup.py  mediafiles.py  policy.py
   archiver/    __init__.py  auth.py  client.py  convert.py  dialogs.py  history.py  maintenance.py  media.py
                realtime.py  service.py
@@ -38,7 +38,7 @@ src/tgarchive/
                versions/20261025_0003_history_sync.py  versions/20261025_0004_media_archive.py
 tests/
   conftest.py  factories.py  tl_objects.py  fake_telegram.py  fake_botapi.py  archive_fixture.py
-  test_account_binding.py  test_auth.py  test_backup.py  test_bot.py  test_config.py  test_convert.py  test_dialogs.py  test_engine.py
+  test_account_binding.py  test_auth.py  test_backup.py  test_bot.py  test_config.py  test_doctor.py  test_e2e.py  test_convert.py  test_dialogs.py  test_engine.py
   test_export.py  test_fts.py  test_history.py  test_logging.py  test_media.py  test_migrations.py  test_policy.py  test_realtime.py
   test_search.py  test_service.py
   test_store_deletions.py  test_store_messages.py

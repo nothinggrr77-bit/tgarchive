@@ -19,12 +19,11 @@ To‘liq yo‘riqnoma: **[docs/deploy.md](docs/deploy.md)** (GitHub → server �
 
 ```bash
 git clone git@github-tgarchive:<LOGIN>/tgarchive.git ~/tgarchive && cd ~/tgarchive
-cp .env.example .env && chmod 600 .env && nano .env      # TG_API_ID, TG_API_HASH, BOT_TOKEN, OWNER_ID
-docker compose build
-docker compose run --rm archiver login                   # bir marta
-docker compose up -d                                     # archiver + bot, server qayta yoqilganda ham
+bash scripts/setup.sh        # .env, tekshiruv (doctor), login, ishga tushirish — hammasi so'rab-so'rab
 docker compose exec archiver python -m tgarchive status
 ```
+
+Yangilash: `git pull && docker compose up -d --build`. Muammo bo'lsa: `docker compose run --rm --no-deps -T archiver doctor`.
 
 ## Hujjatlar
 
@@ -84,6 +83,7 @@ tgarchive bot                     # admin bot (Docker'da avtomatik)
 tgarchive import                  # tarixni bir marta oxirigacha import qilish
 tgarchive status                  # holat va import statistikasi
 tgarchive health                  # healthcheck: 0 — sog'lom, 1 — nosoz
+tgarchive doctor [--offline]      # barcha sozlamalar va Telegram ulanishlarini tekshirish
 
 tgarchive media stats             # yuklangan / navbatdagi / katta fayllar, disk
 tgarchive media large             # 50 MB dan katta, yuklanmagan fayllar ro'yxati
