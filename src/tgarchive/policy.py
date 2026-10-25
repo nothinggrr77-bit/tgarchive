@@ -72,7 +72,7 @@ def decide_policy(
         mode, keep_last = ArchiveMode.FULL, None
         reason = "egasi yoqqan" if archive_override else "to'liq, doimiy"
 
-    media, media_reason = _media_decision(chat, settings, media_override)
+    media, media_reason = media_decision(chat, settings, media_override)
     return ChatPolicy(
         mode=mode,
         reason=reason,
@@ -83,7 +83,7 @@ def decide_policy(
     )
 
 
-def _media_decision(chat: ChatInfo, settings: ArchiverSettings, override: bool | None) -> tuple[bool, str]:
+def media_decision(chat: ChatInfo, settings: ArchiverSettings, override: bool | None) -> tuple[bool, str]:
     if chat.is_protected:
         return False, "himoyalangan kontent"
     if override is not None:

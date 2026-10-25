@@ -122,6 +122,13 @@ def format_summary(summary: ImportSummary, heartbeat: ComponentHeartbeat | None,
                 f"Real vaqt: yangi {counts.get('created', 0)}, tahrir {counts.get('edited', 0)}, "
                 f"o'chirish {deleted}, navbatda {realtime.get('queue', 0)}{last_text}"
             )
+        media = (heartbeat.details or {}).get("media")
+        if media:
+            current = media.get("current") or {}
+            doing = f", hozir: media {current['media_id']}" if current.get("media_id") else ""
+            lines.append(f"Media worker: {media.get('state')}{doing}")
+            if media.get("paused"):
+                lines.append(f"  To'xtatilgan: {media['paused']}")
     modes = ", ".join(f"{k}: {v}" for k, v in sorted(summary.chats_by_mode.items())) or "-"
     statuses = ", ".join(f"{k}: {v}" for k, v in sorted(summary.backfill_by_status.items())) or "-"
     lines.append(f"Chatlar (rejim): {modes}")

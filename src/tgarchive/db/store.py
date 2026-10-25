@@ -33,7 +33,7 @@ from tgarchive.db.enums import (
     MediaType,
     MessageSource,
 )
-from tgarchive.db.models import AuditLog, Chat, DeletionEvent, Media, Message, MessageVersion
+from tgarchive.db.models import AuditLog, Chat, DeletionEvent, Media, MediaTrash, Message, MessageVersion
 from tgarchive.db.types import utcnow
 
 _IN_CHUNK = 500
@@ -566,9 +566,30 @@ async def prune_channel_window(session: AsyncSession, chat_id: int, keep_from_id
         )
     ).all()
     pks = [row.id for row in rows]
-    for chunk in _chunks(pks):
-        await session.execute(delete(Message).where(Message.id.in_(chunk)))
+    await delete_messages(session, pks)
     return sorted(row.message_id for row in rows)
+
+
+async def delete_messages(session: AsyncSession, message_pks: Sequence[int]) -> None:
+    """Xabarlarni arxivdan butunlay olib tashlaydi (kanal oynasi, keyinroq retention).
+
+    Versiyalar va media qatorlari CASCADE bilan o'chadi. Yuklangan fayl boshqa xabarda
+    ishlatilmasa, ``media_trash`` ga yoziladi — faylni media worker o'chiradi.
+    """
+    paths: set[str] = set()
+    for chunk in _chunks(list(message_pks)):
+        paths.update(
+            await session.scalars(
+                select(Media.local_path).where(Media.message_pk.in_(chunk), Media.local_path.is_not(None))
+            )
+        )
+        await session.execute(delete(Message).where(Message.id.in_(chunk)))
+    for path in sorted(paths):
+        still_used = await session.scalar(select(Media.id).where(Media.local_path == path).limit(1))
+        queued = await session.scalar(select(MediaTrash.id).where(MediaTrash.local_path == path))
+        if still_used is None and queued is None:
+            session.add(MediaTrash(local_path=path))
+    await session.flush()
 
 
 # -------------------------------------------------------------------------- audit

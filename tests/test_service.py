@@ -45,6 +45,19 @@ def with_session_file(cfg: ArchiverSettings) -> ArchiverSettings:
     return cfg
 
 
+class NoMedia:
+    """Media worker o'rniga: to'xtash testlarida uning kutishlari aralashmasin."""
+
+    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+        pass
+
+    async def run(self) -> None:
+        return None
+
+    def details(self) -> None:
+        return None
+
+
 def telegram() -> FakeTelegram:
     tg = FakeTelegram()
     tg.add_chat(user(), *[message(i, peer=types.PeerUser(7)) for i in range(1, 26)])
@@ -132,7 +145,9 @@ async def test_service_mode_stops_cleanly_on_signal(tmp_path: Path) -> None:
         if seconds > 0:  # sahifalar orasidagi 0 s pauza emas, keyingi sinxrongacha kutish
             stop.set()  # SIGTERM kelgandek
 
-    service = ArchiverService(cfg, client_factory=lambda _: tg, sleep=stop_when_idle, stop=stop)
+    service = ArchiverService(
+        cfg, client_factory=lambda _: tg, sleep=stop_when_idle, stop=stop, media_factory=NoMedia
+    )
     assert await service.run() == EXIT_OK
     db = await open_db(cfg)
     async with db.read() as session:
@@ -152,7 +167,8 @@ async def test_stop_during_import_keeps_checkpoint_and_resumes(tmp_path: Path) -
     async def stop_now(seconds: float) -> None:
         stop.set()  # birinchi sahifadan keyin SIGTERM
 
-    assert await ArchiverService(cfg, client_factory=lambda _: tg, sleep=stop_now, stop=stop).run() == EXIT_OK
+    service = ArchiverService(cfg, client_factory=lambda _: tg, sleep=stop_now, stop=stop, media_factory=NoMedia)
+    assert await service.run() == EXIT_OK
     db = await open_db(cfg)
     async with db.read() as session:
         private_state = await session.get(ChatSyncState, 7)

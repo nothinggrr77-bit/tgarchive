@@ -349,15 +349,41 @@ def _cmd_import(args: argparse.Namespace) -> int:
     return asyncio.run(_run_service(_service_settings(args), once=True))
 
 
-async def _status(settings: BaseAppSettings) -> int:
+def _media_limit_mb(env_file: str) -> int | None:
+    """Hajm chegarasi faqat ko'rsatish uchun; archiver sozlamalari bo'lmasa — None."""
+    try:
+        return load_settings(ArchiverSettings, env_file).media_max_file_mb
+    except ConfigError:
+        return None
+
+
+def _disk_line(path: Path) -> str | None:
+    import shutil
+
+    from tgarchive.db.media import format_size
+
+    if not path.exists():
+        return None
+    usage = shutil.disk_usage(path)
+    return f"Disk (MEDIA_DIR): bo'sh {format_size(usage.free)} / {format_size(usage.total)}"
+
+
+async def _status(settings: BaseAppSettings, limit_mb: int | None = None) -> int:
+    from tgarchive.db.media import format_media_summary, media_summary
+
     db = _open_db(settings)
     try:
         async with db.read() as session:
             summary = await import_summary(session)
             heartbeat = await get_heartbeat(session, ARCHIVER)
+            media = await media_summary(session)
     finally:
         await db.dispose()
     print(format_summary(summary, heartbeat, utcnow()))
+    print(format_media_summary(media, limit_mb))
+    disk = _disk_line(settings.paths.media)
+    if disk:
+        print(disk)
     return EXIT_OK
 
 
@@ -366,7 +392,65 @@ def _cmd_status(args: argparse.Namespace) -> int:
     if not settings.paths.db.exists():
         print("Baza hali yaratilmagan: tgarchive db-upgrade")
         return EXIT_RUNTIME
-    return asyncio.run(_status(settings))
+    return asyncio.run(_status(settings, _media_limit_mb(args.env_file)))
+
+
+# --------------------------------------------------------------------- media
+
+
+async def _media(args: argparse.Namespace, settings: BaseAppSettings) -> int:
+    from tgarchive.db.media import (
+        FetchRefused,
+        format_large_files,
+        format_media_summary,
+        list_large_files,
+        media_summary,
+        request_fetch,
+    )
+
+    db = _open_db(settings)
+    try:
+        if args.media_command == "stats":
+            async with db.read() as session:
+                print(format_media_summary(await media_summary(session), _media_limit_mb(args.env_file)))
+            disk = _disk_line(settings.paths.media)
+            if disk:
+                print(disk)
+        elif args.media_command == "large":
+            async with db.read() as session:
+                files = await list_large_files(session, limit=args.limit, offset=args.offset)
+            print(format_large_files(files))
+            if files:
+                print("Bittasini yuklash: tgarchive media fetch <ID>")
+        elif args.media_command == "fetch":
+            try:
+                async with db.write() as session:
+                    media = await request_fetch(session, args.media_id)
+                    await add_audit(session, "media_fetch_requested", actor="owner", target=f"media:{media.id}")
+            except FetchRefused as exc:
+                print(exc)
+                return EXIT_RUNTIME
+            print(f"Media {args.media_id} navbatga qo'yildi — archiver uni yaqin daqiqalarda yuklaydi.")
+        elif args.media_command == "verify":
+            from tgarchive.archiver.media import MediaWorker
+
+            archiver = load_settings(ArchiverSettings, args.env_file)
+            report = await MediaWorker(None, db, archiver).verify(checksum=args.checksum)
+            print(
+                f"Tekshirildi: {report.checked}, diskda yo'q: {report.missing}, buzilgan: {report.mismatched}"
+                + (" (qayta yuklash uchun navbatga qo'yildi)" if report.missing or report.mismatched else "")
+            )
+    finally:
+        await db.dispose()
+    return EXIT_OK
+
+
+def _cmd_media(args: argparse.Namespace) -> int:
+    settings = load_settings(BaseAppSettings, args.env_file)
+    if not settings.paths.db.exists():
+        print("Baza hali yaratilmagan: tgarchive db-upgrade")
+        return EXIT_RUNTIME
+    return asyncio.run(_media(args, settings))
 
 
 async def _health(settings: BaseAppSettings, component: str, max_age_s: int) -> int:
@@ -429,6 +513,18 @@ def _build_parser() -> argparse.ArgumentParser:
     health.add_argument("--component", default=ARCHIVER)
     health.add_argument("--max-age", type=int, default=180, help="heartbeat necha sekunddan eski bo'lmasin")
     health.set_defaults(handler=_cmd_health)
+
+    media = sub.add_parser("media", help="media arxivi: statistika, katta fayllar, tekshiruv")
+    media_sub = media.add_subparsers(dest="media_command", required=True)
+    media_sub.add_parser("stats", help="yuklangan, navbatdagi va katta fayllar soni, disk")
+    large = media_sub.add_parser("large", help="hajm chegarasidan katta, yuklanmagan fayllar ro'yxati")
+    large.add_argument("--limit", type=int, default=20)
+    large.add_argument("--offset", type=int, default=0)
+    fetch = media_sub.add_parser("fetch", help="bitta faylni chegaraga qaramay yuklash")
+    fetch.add_argument("media_id", type=int, help="tgarchive media large ro'yxatidagi ID")
+    verify = media_sub.add_parser("verify", help="yuklangan fayllar diskda bormi")
+    verify.add_argument("--checksum", action="store_true", help="sha256 bilan to'liq tekshirish (sekin)")
+    media.set_defaults(handler=_cmd_media)
     return parser
 
 

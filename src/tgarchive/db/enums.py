@@ -84,9 +84,21 @@ class MediaStatus(StrEnum):
     DOWNLOADING = "downloading"
     DONE = "done"
     FAILED = "failed"  # urinishlar soni tugadi
-    SKIPPED = "skipped"  # siyosat bo'yicha yuklanmaydi (sabab status_note da)
-    MISSING = "missing"  # bazada bor, lekin diskda yo'q yoki checksum mos emas
+    SKIPPED = "skipped"  # yuklanmaydi: sabab skip_reason da, metama'lumot saqlanadi
+    MISSING = "missing"  # bazada bor, lekin diskda yo'q yoki checksum mos emas — qayta yuklanadi
     UNAVAILABLE = "unavailable"  # Telegram'da endi mavjud emas
+
+
+class MediaSkipReason(StrEnum):
+    TOO_LARGE = "too_large"  # MEDIA_MAX_FILE_MB dan katta — "katta fayl" sifatida ko'rsatiladi
+    TYPE = "type"  # turi MEDIA_TYPES da yo'q
+    POLICY = "policy"  # MEDIA_ENABLED / MEDIA_IN_CHANNELS / egasining chat bo'yicha qarori
+    PROTECTED = "protected"  # himoyalangan kontent (noforwards) — hech qachon yuklanmaydi
+    VIEW_ONCE = "view_once"  # bir marta ko'riladigan media (ttl) — hech qachon yuklanmaydi
+
+
+# Sozlama o'zgarsa qayta ko'rib chiqiladigan sabablar (himoyalangan va view-once — hech qachon)
+REVIEWABLE_SKIPS = frozenset({MediaSkipReason.TOO_LARGE, MediaSkipReason.TYPE, MediaSkipReason.POLICY})
 
 
 class SyncStatus(StrEnum):

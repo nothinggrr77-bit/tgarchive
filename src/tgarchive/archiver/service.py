@@ -27,6 +27,7 @@ from telethon import errors
 from tgarchive.archiver.client import create_client
 from tgarchive.archiver.dialogs import sync_dialogs
 from tgarchive.archiver.history import FATAL_ERRORS, TRANSIENT_ERRORS, HistoryImporter, Sleep
+from tgarchive.archiver.media import MediaWorker
 from tgarchive.archiver.realtime import RealtimeArchiver, stop_consumer
 from tgarchive.config import ArchiverSettings
 from tgarchive.db.engine import Database
@@ -56,6 +57,7 @@ class ArchiverService:
         stop: asyncio.Event | None = None,
         sleep: Sleep | None = None,
         clock: Callable[[], datetime] = utcnow,
+        media_factory: Callable[..., Any] | None = None,
     ) -> None:
         self.settings = settings
         self.client_factory = client_factory or (
@@ -71,12 +73,15 @@ class ArchiverService:
         self.last_sync_at: datetime | None = None
         self.importer: HistoryImporter | None = None
         self.realtime: RealtimeArchiver | None = None
+        self.media: MediaWorker | None = None
+        self.media_factory: Callable[..., Any] = media_factory or MediaWorker
 
     async def run(self, *, once: bool = False) -> int:
         db = Database(self.settings.database_url, busy_timeout_ms=self.settings.db_busy_timeout_ms)
         client = None
         heartbeat: asyncio.Task[None] | None = None
         consumer: asyncio.Task[None] | None = None
+        media_task: asyncio.Task[None] | None = None
         try:
             await self._beat(db)
             heartbeat = asyncio.create_task(self._heartbeat_loop(db))
@@ -102,8 +107,16 @@ class ArchiverService:
             if self.realtime is not None:
                 self.realtime.importer = self.importer
                 consumer = asyncio.create_task(self.realtime.run())
+            if not once:
+                # Bir martalik "import" faqat tarixni oladi; fayllar doimiy xizmatda yuklanadi
+                self.media = self.media_factory(
+                    client, db, self.settings, stop=self.stop, sleep=self._sleep, clock=self._clock
+                )
+                media_task = asyncio.create_task(self.media.run())
             return await self._loop(client, db, once=once)
         finally:
+            # Yarim yuklangan fayl .tmp da qoladi va keyingi ishga tushishda tozalanadi
+            await stop_consumer(media_task)
             if self.realtime is not None:
                 self.realtime.unregister()
                 if consumer is not None and not consumer.done():
@@ -195,6 +208,7 @@ class ArchiverService:
             "last_sync_at": self.last_sync_at.isoformat() if self.last_sync_at else None,
             "error": self.error,
             "realtime": self.realtime.details() if self.realtime else None,
+            "media": self.media.details() if self.media else None,
         }
 
     async def _beat(self, db: Database) -> None:

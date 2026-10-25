@@ -143,11 +143,21 @@ class ArchiverSettings(BaseAppSettings):
     channel_refresh_interval_s: int = Field(3600, ge=300, le=86_400)
 
     media_enabled: bool = True
+    # Stickerlardan tashqari barcha fayl turlari
     media_types: Annotated[frozenset[MediaType], NoDecode] = frozenset(
-        {MediaType.PHOTO, MediaType.VOICE, MediaType.VIDEO_NOTE}
+        {
+            MediaType.PHOTO,
+            MediaType.VIDEO,
+            MediaType.VOICE,
+            MediaType.AUDIO,
+            MediaType.DOCUMENT,
+            MediaType.ANIMATION,
+            MediaType.VIDEO_NOTE,
+        }
     )
     media_in_channels: bool = False
-    media_max_file_mb: int = Field(20, ge=1, le=4000)
+    # Bundan katta fayl yuklanmaydi, lekin "katta fayl" sifatida metama'lumoti bilan ko'rsatiladi
+    media_max_file_mb: int = Field(50, ge=1, le=4000)
     media_max_total_gb: float | None = Field(None, gt=0)
     media_min_free_gb: float = Field(5.0, ge=0)
     media_concurrency: int = Field(2, ge=1, le=8)

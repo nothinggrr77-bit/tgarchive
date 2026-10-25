@@ -23,6 +23,7 @@ EXPECTED_TABLES = {
     "audit_log",
     "component_heartbeats",
     "app_meta",
+    "media_trash",
     "messages_fts",
 }
 
@@ -36,11 +37,38 @@ def test_upgrade_creates_schema(migrated_template: Path) -> None:
     assert EXPECTED_TABLES <= _objects(migrated_template, "table")
     assert {"messages_fts_ai", "messages_fts_ad", "messages_fts_au"} <= _objects(migrated_template, "trigger")
     with sqlite3.connect(migrated_template) as conn:
-        assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == head_revision() == "0003"
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == head_revision() == "0004"
         columns = {row[1] for row in conn.execute("PRAGMA table_info(chats)")}
         message_columns = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
+        media_columns = {row[1] for row in conn.execute("PRAGMA table_info(media)")}
     assert {"archive_mode", "linked_chat_id"} <= columns
     assert "comments_synced_id" in message_columns
+    assert {"skip_reason", "force_download"} <= media_columns
+
+
+def test_0004_requeues_previously_skipped_media(tmp_path: Path) -> None:
+    """0004 dan oldin sababsiz "skipped" bo'lgan media qayta ko'rib chiqish uchun navbatga qaytadi."""
+    path = tmp_path / "old.sqlite3"
+    url = sqlite_url(path)
+    upgrade(url, "0003")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO chats (chat_id, chat_type, is_protected, first_seen_at, updated_at) "
+            "VALUES (7, 'private', 0, '2026-01-01', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO messages (chat_id, message_id, is_outgoing, date, noforwards, content_hash, edit_count, "
+            "source, archived_at, updated_at) VALUES (7, 1, 0, '2026-01-01', 0, 'h', 0, 'history', "
+            "'2026-01-01', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO media (message_pk, media_type, status, status_note, attempts, created_at, updated_at) "
+            "VALUES (1, 'video', 'skipped', 'eski sabab', 0, '2026-01-01', '2026-01-01')"
+        )
+    upgrade(url)
+    with sqlite3.connect(path) as conn:
+        row = conn.execute("SELECT status, status_note, skip_reason, force_download FROM media").fetchone()
+    assert row == ("pending", None, None, 0)
 
 
 def test_models_match_migration(migrated_template: Path) -> None:

@@ -159,7 +159,9 @@ Fayllar **bazaga emas**, fayl tizimiga (`MEDIA_DIR`) yoziladi. Sabablar: SQLite 
 
 Bazada: nisbiy `local_path`, `stored_size`, `sha256`, `mime_type`, Telegram identifikatorlari (`tg_media_id`, `tg_access_hash`, `tg_dc_id`). `file_reference` **saqlanmaydi** — u eskiradi; yuklashdan oldin xabar qayta olinadi.
 
-Holatlar: `pending → downloading → done`, yoki `failed` (urinishlar tugadi), `skipped` (siyosat, sabab `status_note` da), `missing` (diskda yo‘q / checksum mos emas), `unavailable` (Telegram'da yo‘q).
+Holatlar: `pending → downloading → done`, yoki `failed` (urinishlar tugadi), `skipped` (sabab `skip_reason` da: `too_large` — katta fayl, `type`, `policy`, `protected`, `view_once`), `missing` (diskda yo‘q / checksum mos emas — qayta yuklanadi), `unavailable` (Telegram'da yo‘q).
+
+0004 migratsiyasi: `media.skip_reason`, `media.force_download` (egasi `tgarchive media fetch` bilan so‘ragan), `media_trash` (arxivdan olib tashlangan xabarlarning o‘chiriladigan fayllari). Batafsil: [08-media.md](08-media.md).
 
 ## 9. To‘liq matnli qidiruv (FTS5)
 

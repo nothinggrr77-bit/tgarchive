@@ -39,6 +39,7 @@ class FakeTelegram:
         self.connected = False
         self.calls: list[tuple[str, int, dict[str, Any]]] = []
         self.handlers: list[tuple[Any, Any]] = []
+        self.files: dict[tuple[int, int], bytes] = {}  # (chat_id, message_id) -> fayl mazmuni
         self.on_connect: list[tuple[type, Any]] = []  # ulanishda yuboriladigan hodisalar (catch_up)
         self._errors: dict[str, list[tuple[int, BaseException]]] = defaultdict(list)
         self._counts: dict[str, int] = defaultdict(int)
@@ -140,6 +141,21 @@ class FakeTelegram:
         for msg in items:
             if msg.id > kwargs.get("min_id", 0):
                 yield msg
+
+    async def download_media(self, message: Any, file: str, progress_callback: Any = None) -> str | None:
+        """Telethon kabi: faylni bo'laklab yozadi, har bo'lakdan keyin progress_callback."""
+        self.calls.append(("download_media", message.id, {"file": file}))
+        self._tick("download_media")
+        content = self.files.get((utils.get_peer_id(message.peer_id), message.id))
+        if content is None:
+            return None
+        chunk = 64 * 1024
+        with open(file, "wb") as handle:
+            for start in range(0, len(content), chunk):
+                handle.write(content[start : start + chunk])
+                if progress_callback is not None:
+                    progress_callback(handle.tell(), len(content))
+        return file
 
     async def iter_dialogs(self, limit: int | None = None):
         for chat_id, entity in list(self.entities.items()):

@@ -16,6 +16,7 @@ from tgarchive.db.enums import (
     DeletionResolution,
     DeletionSource,
     DeletionStatus,
+    MediaSkipReason,
     MediaStatus,
     MediaType,
     MessageSource,
@@ -201,6 +202,9 @@ class Media(Base):
 
     status: Mapped[MediaStatus] = mapped_column(str_enum(MediaStatus), default=MediaStatus.PENDING)
     status_note: Mapped[str | None] = mapped_column(String(255))
+    skip_reason: Mapped[MediaSkipReason | None] = mapped_column(str_enum(MediaSkipReason))
+    # Egasi so'ragan: hajm chegarasiga qaramay yuklansin (tgarchive media fetch)
+    force_download: Mapped[bool] = mapped_column(default=False, server_default=sql_text("0"))
     attempts: Mapped[int] = mapped_column(default=0)
     next_attempt_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
@@ -226,6 +230,13 @@ class Media(Base):
         ),
         Index("ix_media_queue", "status", "next_attempt_at"),
         Index("ix_media_tg_media_id", "tg_media_id"),
+        # Bir xil fayl bir necha xabarda (forward) — fayl faqat oxirgi havola yo'qolganda o'chiriladi
+        Index(
+            "ix_media_local_path",
+            "local_path",
+            sqlite_where=sql_text("local_path IS NOT NULL"),
+            postgresql_where=sql_text("local_path IS NOT NULL"),
+        ),
     )
 
 
@@ -288,6 +299,21 @@ class DeletionEvent(Base):
         Index("ix_deletion_events_message_pk", "message_pk"),
         Index("ix_deletion_events_chat_detected", "resolved_chat_id", "detected_at"),
     )
+
+
+class MediaTrash(Base):
+    """Arxivdan olib tashlangan xabarlarning endi hech kim ishlatmaydigan fayllari.
+
+    Xabar o'chirilishi bilan bitta tranzaksiyada yoziladi; faylni media worker o'chiradi
+    (va o'chirishdan oldin yana tekshiradi). Shu sababli bazani eski zaxiradan tiklash
+    "ortiqcha" fayllarni o'chirib yubormaydi — faqat aniq ro'yxatdagilar o'chiriladi.
+    """
+
+    __tablename__ = "media_trash"
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True)
+    local_path: Mapped[str] = mapped_column(String(1024), unique=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 class AuditLog(Base):

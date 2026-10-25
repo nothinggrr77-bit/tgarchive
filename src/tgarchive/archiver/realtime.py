@@ -27,7 +27,6 @@ from __future__ import annotations
 import asyncio
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
-from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -289,8 +288,13 @@ class RealtimeArchiver:
 
 
 async def stop_consumer(task: asyncio.Task[None] | None) -> None:
+    """Fon vazifasini to'xtatadi; u oldinroq xato bilan tugagan bo'lsa — log'ga yozadi, ko'tarmaydi."""
     if task is None:
         return
     task.cancel()
-    with suppress(asyncio.CancelledError):
+    try:
         await task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        log.exception("background_task_failed")

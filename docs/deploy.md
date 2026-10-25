@@ -167,6 +167,8 @@ docker compose restart archiver
 docker compose stop archiver                           # to'xtatish (ma'lumot saqlanadi)
 docker compose up -d                                   # qayta ishga tushirish
 docker system df -v | grep tgarchive                   # volume hajmlari
+docker compose exec archiver python -m tgarchive media large   # 50 MB dan katta fayllar
+docker compose exec archiver python -m tgarchive media fetch <ID>
 ```
 
 **Yangilash** (yangi bosqichlar chiqqanda):
@@ -242,7 +244,7 @@ docker compose up -d
 ## Hozirgi versiya cheklovlari
 
 - Real vaqt ishlaydi (yangi xabarlar, tahrirlar, o‘chirishlar). Archiver o‘chiq bo‘lgan paytdagi o‘chirishlar faqat Telegram qayta ulanishda bergan bo‘lsa qayd etiladi — [07-realtime.md](07-realtime.md).
-- Media fayllar hali yuklanmaydi — 8-bosqich (navbat yig‘ilib boradi, keyin yuklanadi).
+- Media: 50 MB gacha fayllar yuklanadi; kattalari ro‘yxatda ko‘rinadi ([08-media.md](08-media.md)). Disk to‘lib qolmasligi uchun `MEDIA_MIN_FREE_GB` (5 GB) himoyasi bor.
 - Admin bot — 9-bosqich.
 - Avtomatik shifrlangan zaxira — 10-bosqich.
 - Docker build va compose fayl bu yerda (Windows'da Docker yo‘q) haqiqiy Docker bilan **ishga tushirilmagan**: image muhiti taqlid qilinib tekshirilgan (lock'dan o‘rnatish, Linux wheel'lari, `PYTHONPATH` rejimi, compose sintaksisi). Serverdagi birinchi `docker compose build` — haqiqiy tekshiruv.

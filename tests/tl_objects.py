@@ -66,14 +66,16 @@ def photo_media(**fields: Any) -> types.MessageMediaPhoto:
     return types.MessageMediaPhoto(photo=photo, **fields)
 
 
-def document_media(attributes: list[Any], *, mime: str = "application/octet-stream", **flags: Any):
+def document_media(
+    attributes: list[Any], *, mime: str = "application/octet-stream", size: int = 4096, doc_id: int = 300, **flags: Any
+):
     doc = types.Document(
-        id=300,
+        id=doc_id,
         access_hash=400,
         file_reference=b"",
         date=at(),
         mime_type=mime,
-        size=4096,
+        size=size,
         dc_id=4,
         attributes=attributes,
     )

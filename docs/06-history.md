@@ -114,7 +114,7 @@ Haqiqiy akkaunt bilan ixtiyoriy test: `TGARCHIVE_INTEGRATION=1 pytest tests/inte
 ## Ma’lum cheklovlar
 
 - Real vaqt hodisalari (yangi xabar darhol, tahrirlar, o‘chirishlar) — [07-realtime.md](07-realtime.md). Bu bosqichdagi so‘rovli sinxron endi o‘tkazib yuborilgan hodisalar uchun solishtirish vazifasini bajaradi.
-- Media fayllar hali yuklanmaydi (8-bosqich): `media` jadvalida `pending` navbat yig‘iladi.
+- Tarix importi fayllarni o‘zi yuklamaydi — har bir fayl uchun navbat qatori yaratadi, uni media worker yuklaydi ([08-media.md](08-media.md)).
 - Kanal oynasi yangi postlar har tekshiruvda 20 tadan ko‘p kelsa, oraliqdagi postlar umuman saqlanmaydi — bu "oxirgi 20 ta" qoidasining natijasi.
 - Arxivdan chiqib ketgan (`left`) yoki o‘chirilgan chatlar dialoglar ro‘yxatidan yo‘qoladi; ularning oldin arxivlangan xabarlari qoladi.
 - Izohlar ochiq muhokama guruhida bo‘lmasa (a’zolik talab qilinsa) — olinmaydi, log'ga `comments_unavailable` yoziladi.
