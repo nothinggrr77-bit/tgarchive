@@ -1,0 +1,8 @@
+# Repozitoriyda va Linux serverda har doim LF (Windows'da yozilgan fayllar ham)
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.pdf binary

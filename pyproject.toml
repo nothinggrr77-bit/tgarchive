@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools==84.2.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tgarchive"
+version = "0.1.0"
+description = "Telegram shaxsiy arxiv tizimi: MTProto archiver + admin bot"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+# To'g'ridan-to'g'ri bog'liqliklar aniq versiyada. To'liq lock: requirements.txt
+dependencies = [
+    "telethon==1.45.0",
+    "cryptg==0.6.0",
+    "aiogram==3.31.0",
+    # aiogram 3.31.0 pydantic<2.14 talab qiladi
+    "pydantic==2.13.5",
+    "pydantic-settings==2.16.1",
+    "sqlalchemy[asyncio]==2.1.6",
+    "alembic==1.20.1",
+    "aiosqlite==0.22.1",
+    "structlog==26.1.0",
+    "tzdata==2026.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+]
+
+[project.scripts]
+tgarchive = "tgarchive.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"tgarchive.migrations" = ["script.py.mako"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: haqiqiy Telegram akkauntiga ulanadigan ixtiyoriy testlar (TGARCHIVE_INTEGRATION=1)",
+]
+filterwarnings = ["error::DeprecationWarning:tgarchive.*"]

@@ -1,0 +1,30 @@
+# Maxfiy ma'lumotlar image'ga hech qachon tushmasin
+.env
+.env.*
+!.env.example
+*.session
+*.session-journal
+secrets/
+
+# Ish vaqtidagi ma'lumotlar
+data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+backups/
+exports/
+
+# Image uchun kerak emas
+.git
+.gitignore
+.gitattributes
+tests/
+docs/
+**/__pycache__
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.vscode/
+.idea/
