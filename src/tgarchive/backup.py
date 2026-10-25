@@ -25,6 +25,7 @@ import sqlite3
 import tarfile
 import tempfile
 import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
@@ -127,6 +128,19 @@ def clean_stale_tmp(root: Path, now: datetime | None = None) -> int:
                 item.unlink(missing_ok=True)
             removed += 1
     return removed
+
+
+def _replace(source: Path, target: Path, *, attempts: int = 20, delay_s: float = 0.1) -> None:
+    """``os.replace``. Faqat Windows'da (lokal ishlab chiqish): antivirus yangi faylni bir zum
+    qulflashi mumkin — qisqa qayta urinish. Linux'da qayta urinish yo'q."""
+    for attempt in range(attempts):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if IS_POSIX or attempt == attempts - 1:
+                raise
+            time.sleep(delay_s)
 
 
 # ------------------------------------------------------------------- yaratish
@@ -239,7 +253,7 @@ def create_backup(settings: ArchiverSettings, *, now: datetime | None = None) ->
             else:
                 _write_tar(out, manifest, files, media)
         final = root / name
-        os.replace(part, final)
+        _replace(part, final)
         if IS_POSIX:
             os.chmod(final, 0o600)
         prune_backups(root, settings.backup_keep)
@@ -347,7 +361,7 @@ def verify_backup(path: Path, identities: list[Any] | None, *, work_root: Path) 
 def _move_aside(path: Path, stamp: str, moved: list[Path]) -> None:
     if path.exists():
         aside = path.with_name(f"{path.name}.before-restore-{stamp}")
-        os.replace(path, aside)
+        _replace(path, aside)
         moved.append(aside)
 
 

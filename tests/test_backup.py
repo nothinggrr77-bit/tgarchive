@@ -8,6 +8,7 @@ import json
 import os
 import sqlite3
 import tarfile
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -52,9 +53,10 @@ def settings(tmp_path: Path, **overrides: Any) -> ArchiverSettings:
 
 def make_session(cfg: ArchiverSettings) -> None:
     cfg.session_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(cfg.session_path) as conn:
+    with closing(sqlite3.connect(cfg.session_path)) as conn:  # with sqlite3.connect() o'zi yopmaydi
         conn.execute("CREATE TABLE IF NOT EXISTS sessions (dc_id INTEGER, auth_key BLOB)")
         conn.execute("INSERT INTO sessions VALUES (2, x'00112233')")
+        conn.commit()
 
 
 def keyfile(tmp_path: Path, secret: str, name: str = "key.txt") -> Path:
@@ -189,9 +191,9 @@ async def test_restore_brings_back_data_and_keeps_current_db(archived: ArchiverS
     async with restored.read() as session:
         assert await session.scalar(select(func.count()).select_from(Message)) == 10
     await restored.dispose()
-    with sqlite3.connect(cfg.session_path) as conn:
+    with closing(sqlite3.connect(cfg.session_path)) as conn:
         assert conn.execute("SELECT dc_id FROM sessions").fetchone() == (2,)
-    with sqlite3.connect(cfg.paths.db.with_name("archive.sqlite3.before-restore-20261026-033000")) as conn:
+    with closing(sqlite3.connect(cfg.paths.db.with_name("archive.sqlite3.before-restore-20261026-033000"))) as conn:
         assert conn.execute("SELECT count(*) FROM messages").fetchone() == (2,)  # eski holat yo'qolmagan
 
 
