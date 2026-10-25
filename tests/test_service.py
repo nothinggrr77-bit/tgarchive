@@ -146,7 +146,8 @@ async def test_service_mode_stops_cleanly_on_signal(tmp_path: Path) -> None:
             stop.set()  # SIGTERM kelgandek
 
     service = ArchiverService(
-        cfg, client_factory=lambda _: tg, sleep=stop_when_idle, stop=stop, media_factory=NoMedia
+        cfg, client_factory=lambda _: tg, sleep=stop_when_idle, stop=stop, media_factory=NoMedia,
+        maintenance_factory=NoMedia,
     )
     assert await service.run() == EXIT_OK
     db = await open_db(cfg)
@@ -167,7 +168,7 @@ async def test_stop_during_import_keeps_checkpoint_and_resumes(tmp_path: Path) -
     async def stop_now(seconds: float) -> None:
         stop.set()  # birinchi sahifadan keyin SIGTERM
 
-    service = ArchiverService(cfg, client_factory=lambda _: tg, sleep=stop_now, stop=stop, media_factory=NoMedia)
+    service = ArchiverService(cfg, client_factory=lambda _: tg, sleep=stop_now, stop=stop, media_factory=NoMedia, maintenance_factory=NoMedia)
     assert await service.run() == EXIT_OK
     db = await open_db(cfg)
     async with db.read() as session:

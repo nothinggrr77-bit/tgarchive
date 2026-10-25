@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from sqlalchemy import select
 from tgarchive.bot.callbacks import (
     ChatMessages,
     ChatsPage,
@@ -58,7 +59,8 @@ from tgarchive.db.media import (
     media_summary,
     request_fetch,
 )
-from tgarchive.db.models import Media, Message
+from tgarchive.db.meta import LAST_BACKUP_KEY, get_json_meta
+from tgarchive.db.models import AuditLog, DeletionEvent, Media, Message
 from tgarchive.db.search import (
     MessageRow,
     SearchQuery,
@@ -68,12 +70,27 @@ from tgarchive.db.search import (
     message_detail,
     search_messages,
 )
-from tgarchive.db.status import ARCHIVER, format_summary, get_heartbeat, import_summary
+from tgarchive.db.status import ARCHIVER, format_backup_meta, format_summary, get_heartbeat, import_summary
 from tgarchive.db.store import add_audit, get_versions
 from tgarchive.db.types import utcnow
 from tgarchive.mediafiles import resolve_media_path
 
 BOT_UPLOAD_LIMIT = 50 * 1024 * 1024  # oddiy Bot API orqali yuboriladigan fayl chegarasi
+DELETION_RESOLUTIONS = {
+    "confirmed": "tasdiqlangan",
+    "probable": "ehtimoliy",
+    "not_archived": "arxivda nusxa yo'q",
+    "ambiguous": "aniqlanmagan (bir nechta nomzod)",
+    "revoked": "bekor qilindi (xabar joyida)",
+}
+EXPORT_HELP = """<b>Eksport</b> — natija zip fayl (HTML yoki JSON)
+<code>/export chat:-1001234 after:2026-01-01 before:2026-02-01</code>
+<code>/export chat:7 json +media</code>
+<code>/export is:deleted</code> — barcha o'chirilganlar
+<code>/export all</code> — butun arxiv
+
+Filtrlar /search bilan bir xil. <code>json</code> — JSON (sukut: HTML), <code>+media</code> — yuklangan fayllar ham.
+50 MB gacha bo'lsa shu yerga yuboriladi, kattasi serverda qoladi. Eksportlar bir necha kundan keyin serverdan avtomatik o'chiriladi."""
 BUTTONS_PER_ROW = 5
 QUERY_STORE_SIZE = 500
 Order = Literal["date", "deleted"]
@@ -85,8 +102,9 @@ HELP = """<b>Buyruqlar</b>
 /deleted — o'chirilganligi qayd etilgan xabarlar
 /media — media: turlar bo'yicha, katta fayllar; /media <i>nom</i> — fayl nomi bo'yicha
 /stats — arxiv statistikasi
-/status — archiver va server holati
-/export — eksport (10-bosqichda qo'shiladi)
+/status — archiver, zaxira va server holati
+/export <i>filtrlar</i> — eksport (zip: HTML yoki JSON), /export bilan batafsil
+/audit — audit jurnali va o'chirish hodisalari
 
 <b>Qidiruv filtrlari</b> (matn bilan birga yoki alohida)
 <code>chat:-1001234</code> — chat ID (/chats dan)
@@ -553,11 +571,13 @@ class Views:
             summary = await import_summary(session)
             heartbeat = await get_heartbeat(session, ARCHIVER)
             media = await media_summary(session)
+            backup = await get_json_meta(session, LAST_BACKUP_KEY)
         now = utcnow()
         lines = [
             "🩺 <b>Holat</b>",
             esc(format_summary(summary, heartbeat, now)),
             esc(format_media_summary(media)),
+            esc(format_backup_meta(backup, now)),
         ]
         if heartbeat is not None and (now - heartbeat.last_beat_at).total_seconds() > 180:
             lines.append("⚠️ Archiver 3 daqiqadan beri signal bermayapti — u to'xtagan bo'lishi mumkin.")
@@ -568,6 +588,28 @@ class Views:
         lines.append(f"Baza: {format_size(self._db_size())}")
         uptime = int((now - self.started_at).total_seconds())
         lines.append(f"Bot: ishlayapti {uptime // 3600} soat {uptime % 3600 // 60} daqiqa")
+        return View(fit(lines))
+
+    async def audit(self) -> View:
+        async with self.db.read() as session:
+            entries = list(await session.scalars(select(AuditLog).order_by(AuditLog.id.desc()).limit(15)))
+            deletions = list(await session.scalars(select(DeletionEvent).order_by(DeletionEvent.id.desc()).limit(10)))
+        lines = ["🧾 <b>Audit jurnali</b> (oxirgi 15)"]
+        for e in entries:
+            who = e.actor + (f" {e.actor_id}" if e.actor_id else "")
+            target = f" → {esc(shorten(e.target, 40))}" if e.target else ""
+            lines.append(f"{local_time(e.created_at, self.tz)} · {esc(who)} · <b>{esc(e.action)}</b>{target}{'' if e.ok else ' ❌'}")
+        if not entries:
+            lines.append("bo'sh")
+        lines.append("\n🗑 <b>O'chirish hodisalari</b> (oxirgi 10)")
+        for d in deletions:
+            chat = d.resolved_chat_id or d.chat_id or "?"
+            lines.append(
+                f"{local_time(d.detected_at, self.tz)} · #{d.message_id} (chat {chat}) · "
+                f"{esc(DELETION_RESOLUTIONS.get(d.resolution.value, d.resolution.value))} · {esc(d.source.value)}"
+            )
+        if not deletions:
+            lines.append("bo'sh")
         return View(fit(lines))
 
     def _db_size(self) -> int:

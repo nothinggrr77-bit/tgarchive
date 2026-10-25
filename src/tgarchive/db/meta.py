@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tgarchive.db.models import AppMeta
 
 ACCOUNT_ID_KEY = "account_id"
+LAST_BACKUP_KEY = "last_backup"  # archiver yozadi, status/bot o'qiydi
+LAST_RETENTION_KEY = "last_retention"
 
 
 class AccountMismatchError(Exception):
@@ -33,6 +38,21 @@ async def set_meta(session: AsyncSession, key: str, value: str) -> None:
     else:
         row.value = value
     await session.flush()
+
+
+async def get_json_meta(session: AsyncSession, key: str) -> dict[str, Any] | None:
+    raw = await get_meta(session, key)
+    if raw is None:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+async def set_json_meta(session: AsyncSession, key: str, value: dict[str, Any]) -> None:
+    await set_meta(session, key, json.dumps(value, ensure_ascii=False, sort_keys=True, default=str))
 
 
 async def bound_account_id(session: AsyncSession) -> int | None:

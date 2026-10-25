@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tgarchive import __version__
+from tgarchive.db.media import format_size
 from tgarchive.db.models import Chat, ChatSyncState, ComponentHeartbeat, Message
 from tgarchive.db.types import utcnow
 
@@ -143,3 +144,21 @@ def format_summary(summary: ImportSummary, heartbeat: ComponentHeartbeat | None,
             retry = item.next_retry_at.strftime("%Y-%m-%d %H:%M UTC") if item.next_retry_at else "-"
             lines.append(f"  {item.chat_id} {item.title or '-'}: {item.last_error} (qayta: {retry}, urinish: {item.attempts})")
     return "\n".join(lines)
+
+
+def format_backup_meta(meta: dict[str, Any] | None, now: datetime) -> str:
+    """``app_meta.last_backup`` dan bir-ikki qatorlik holat."""
+    if not meta or not meta.get("at"):
+        line = "Zaxira: hali yaratilmagan"
+    else:
+        at = datetime.fromisoformat(meta["at"])
+        hours = int((now - at).total_seconds() // 3600)
+        lock = "shifrlangan" if meta.get("encrypted") else "⚠️ SHIFRLANMAGAN (BACKUP_AGE_RECIPIENTS)"
+        line = (
+            f"Zaxira: oxirgi {at:%Y-%m-%d %H:%M} UTC ({hours} soat oldin), "
+            f"{format_size(meta.get('size'))}, {lock}"
+        )
+    error_at = meta.get("error_at") if meta else None
+    if error_at and (not meta.get("at") or error_at > meta["at"]):
+        line += f"\n  ⚠️ oxirgi urinish muvaffaqiyatsiz ({error_at[:16].replace('T', ' ')} UTC): {meta.get('error')}"
+    return line

@@ -205,28 +205,16 @@ Session o‘g‘irlanganidan shubha bo‘lsa: avval Telegram'da *Devices* → `t
 
 ---
 
-## 9. Vaqtinchalik zaxira (10-bosqichgacha)
+## 9. Zaxira va tiklash
 
-10-bosqichda kunlik shifrlangan avtomatik zaxira qo‘shiladi. Hozircha qo‘lda:
-
-```bash
-cd ~/tgarchive
-docker compose stop archiver
-(umask 077; docker compose run --rm -T --entrypoint sh archiver -c 'tar -czf - -C /data db session' \
-    > ~/tgarchive-backup-$(date +%F).tar.gz)
-docker compose start archiver
-ls -l ~/tgarchive-backup-*.tar.gz        # -rw------- bo'lishi kerak
-```
-
-Zaxirada **session ham bor** — u parol kabi maxfiy. Shifrlamasdan boshqa joyga ko‘chirmang.
-
-Tiklash (mavjud baza va session **almashtiriladi**):
+Archiver har kuni baza va session'ning zaxirasini avtomatik yaratadi (`backups` volume, oxirgi 7 tasi).
+**Bir marta sozlang:** shifrlash uchun age ochiq kalitini `.env` dagi `BACKUP_AGE_RECIPIENTS` ga yozing.
+Maxfiy kalit faqat sizning kompyuteringizda bo'ladi. Kalit yaratish, zaxirani kompyuteringizga
+ko'chirish, tekshirish va tiklash: **[10-backup-export.md](10-backup-export.md)**.
 
 ```bash
-docker compose stop archiver
-docker compose run --rm -T --entrypoint sh archiver \
-    -c 'rm -rf /data/db/* /data/session/* && tar -xzf - -C /data' < ~/tgarchive-backup-YYYY-MM-DD.tar.gz
-docker compose up -d
+docker compose exec archiver python -m tgarchive backup list
+docker compose exec archiver python -m tgarchive status        # "Zaxira: oxirgi ..." qatori
 ```
 
 ---
@@ -247,5 +235,5 @@ docker compose up -d
 
 - Real vaqt ishlaydi (yangi xabarlar, tahrirlar, o‘chirishlar). Archiver o‘chiq bo‘lgan paytdagi o‘chirishlar faqat Telegram qayta ulanishda bergan bo‘lsa qayd etiladi — [07-realtime.md](07-realtime.md).
 - Media: 50 MB gacha fayllar yuklanadi; kattalari ro‘yxatda ko‘rinadi ([08-media.md](08-media.md)). Disk to‘lib qolmasligi uchun `MEDIA_MIN_FREE_GB` (5 GB) himoyasi bor.
-- Avtomatik shifrlangan zaxira — 10-bosqich.
+- Zaxira faqat server diskida bo'lsa, disk nosozligidan himoya qilmaydi — haftada bir marta o'z kompyuteringizga ko'chiring ([10-backup-export.md](10-backup-export.md)).
 - Docker build va compose fayl bu yerda (Windows'da Docker yo‘q) haqiqiy Docker bilan **ishga tushirilmagan**: image muhiti taqlid qilinib tekshirilgan (lock'dan o‘rnatish, Linux wheel'lari, `PYTHONPATH` rejimi, compose sintaksisi). Serverdagi birinchi `docker compose build` — haqiqiy tekshiruv.

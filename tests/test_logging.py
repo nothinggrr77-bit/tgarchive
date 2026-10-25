@@ -77,3 +77,14 @@ def test_console_format(stream: io.StringIO) -> None:
     assert "started" in output and "component=archiver" in output
     with pytest.raises(json.JSONDecodeError):
         json.loads(output.splitlines()[-1])
+
+
+def test_age_secret_key_is_redacted(stream: io.StringIO) -> None:
+    from tgarchive.crypto import generate_keypair
+
+    public, secret = generate_keypair()
+    setup_logging("INFO", "json", stream=stream)
+    get_logger("test").error("bad_key", detail=f"kalit {secret} xato", recipient=public)
+    output = stream.getvalue()
+    assert secret not in output and "AGE-SECRET-KEY" not in output
+    assert public in output  # ochiq kalit maxfiy emas

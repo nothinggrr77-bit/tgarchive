@@ -21,6 +21,8 @@ dependencies = [
     "aiosqlite==0.22.1",
     "structlog==26.1.0",
     "tzdata==2026.5",
+    # Zaxiralarni shifrlash: standart age formati (rage), oqim bilan
+    "pyrage==1.4.0",
 ]
 
 [project.optional-dependencies]

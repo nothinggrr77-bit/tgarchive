@@ -27,6 +27,7 @@ from telethon import errors
 from tgarchive.archiver.client import create_client
 from tgarchive.archiver.dialogs import sync_dialogs
 from tgarchive.archiver.history import FATAL_ERRORS, TRANSIENT_ERRORS, HistoryImporter, Sleep
+from tgarchive.archiver.maintenance import Maintenance
 from tgarchive.archiver.media import MediaWorker
 from tgarchive.archiver.realtime import RealtimeArchiver, stop_consumer
 from tgarchive.config import ArchiverSettings
@@ -58,6 +59,7 @@ class ArchiverService:
         sleep: Sleep | None = None,
         clock: Callable[[], datetime] = utcnow,
         media_factory: Callable[..., Any] | None = None,
+        maintenance_factory: Callable[..., Any] | None = None,
     ) -> None:
         self.settings = settings
         self.client_factory = client_factory or (
@@ -75,6 +77,8 @@ class ArchiverService:
         self.realtime: RealtimeArchiver | None = None
         self.media: MediaWorker | None = None
         self.media_factory: Callable[..., Any] = media_factory or MediaWorker
+        self.maintenance_factory: Callable[..., Any] = maintenance_factory or Maintenance
+        self.maintenance: Any = None
 
     async def run(self, *, once: bool = False) -> int:
         db = Database(self.settings.database_url, busy_timeout_ms=self.settings.db_busy_timeout_ms)
@@ -82,6 +86,7 @@ class ArchiverService:
         heartbeat: asyncio.Task[None] | None = None
         consumer: asyncio.Task[None] | None = None
         media_task: asyncio.Task[None] | None = None
+        maintenance_task: asyncio.Task[None] | None = None
         try:
             await self._beat(db)
             heartbeat = asyncio.create_task(self._heartbeat_loop(db))
@@ -113,10 +118,16 @@ class ArchiverService:
                     client, db, self.settings, stop=self.stop, sleep=self._sleep, clock=self._clock
                 )
                 media_task = asyncio.create_task(self.media.run())
+                # Zaxira, retention, eksport tozalash — faqat doimiy xizmatda
+                self.maintenance = self.maintenance_factory(
+                    db, self.settings, stop=self.stop, sleep=self._sleep, clock=self._clock
+                )
+                maintenance_task = asyncio.create_task(self.maintenance.run())
             return await self._loop(client, db, once=once)
         finally:
             # Yarim yuklangan fayl .tmp da qoladi va keyingi ishga tushishda tozalanadi
             await stop_consumer(media_task)
+            await stop_consumer(maintenance_task)
             if self.realtime is not None:
                 self.realtime.unregister()
                 if consumer is not None and not consumer.done():

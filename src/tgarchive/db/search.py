@@ -18,7 +18,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Integer, column, exists, func, select, text
+from sqlalchemy import Integer, Select, column, exists, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tgarchive.db.enums import ArchiveMode, ChatType, DeletionStatus, MediaStatus, MediaType, SyncStatus
@@ -186,19 +186,15 @@ def _like_pattern(value: str) -> str:
     return f"%{escaped}%"
 
 
-async def search_messages(
-    session: AsyncSession,
-    query: SearchQuery,
-    *,
-    limit: int = 10,
-    offset: int = 0,
-    order: Literal["date", "deleted"] = "date",
-) -> Page:
-    stmt = select(Message, Chat.title, Chat.chat_type).join(Chat, Chat.chat_id == Message.chat_id)
+def apply_filters(stmt: Select, query: SearchQuery) -> Select | None:
+    """``SearchQuery`` filtrlarini qo'llaydi (qidiruv va eksport uchun umumiy).
+
+    Matnda qidiriladigan so'z qolmasa (masalan, faqat tinish belgilari) — ``None``.
+    """
     if query.text:
         match = build_match_query(query.text)
         if match is None:
-            return Page([], offset, False)
+            return None
         fts = (
             text(f"SELECT rowid FROM {FTS_TABLE} WHERE {FTS_TABLE} MATCH :fts_match")
             .bindparams(fts_match=match)
@@ -223,7 +219,7 @@ async def search_messages(
         stmt = stmt.where(Message.reply_to_msg_id.is_not(None))
     if query.edited:
         stmt = stmt.where(Message.edit_count > 0)
-    if query.deleted or order == "deleted":
+    if query.deleted:
         stmt = stmt.where(Message.deletion_status.is_not(None))
     if query.file_name:
         stmt = stmt.where(
@@ -232,8 +228,22 @@ async def search_messages(
                 Media.file_name.like(_like_pattern(query.file_name), escape="\\"),
             )
         )
+    return stmt
+
+
+async def search_messages(
+    session: AsyncSession,
+    query: SearchQuery,
+    *,
+    limit: int = 10,
+    offset: int = 0,
+    order: Literal["date", "deleted"] = "date",
+) -> Page:
+    stmt = apply_filters(select(Message, Chat.title, Chat.chat_type).join(Chat, Chat.chat_id == Message.chat_id), query)
+    if stmt is None:
+        return Page([], offset, False)
     if order == "deleted":
-        stmt = stmt.order_by(Message.deleted_at.desc(), Message.id.desc())
+        stmt = stmt.where(Message.deletion_status.is_not(None)).order_by(Message.deleted_at.desc(), Message.id.desc())
     else:
         stmt = stmt.order_by(Message.date.desc(), Message.id.desc())
     result = await session.execute(stmt.limit(limit + 1).offset(offset))

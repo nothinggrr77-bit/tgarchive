@@ -325,3 +325,38 @@ def test_bot_health(tmp_path: Path) -> None:
 
     asyncio.run(write())
     assert main(["--env-file", str(env), "health", "--component", "bot"]) == EXIT_OK
+
+
+# ------------------------------------------------------- 10-bosqich: eksport
+
+
+async def test_export_command(harness: BotHarness, archive: Archive, monkeypatch: pytest.MonkeyPatch) -> None:
+    await harness.feed(text_update("/export"))
+    assert "<b>Eksport</b>" in harness.texts()[-1]
+    await harness.feed(text_update("/export json"))
+    assert "Eksportda xato" in harness.texts()[-1]
+
+    await harness.feed(text_update("/export chat:7 json"))
+    assert harness.texts()[-1].startswith("⏳ Eksport tayyorlanmoqda")
+    [document] = harness.session.of(SendDocument)
+    assert document.chat_id == OWNER and document.caption.startswith("📦 8 xabar, 1 chat")
+
+    await harness.feed(text_update("/export mavjudemas"))
+    assert harness.texts()[-1] == "Filtrga mos xabar yo'q — eksport bo'sh."
+
+    from tgarchive.bot import handlers as handlers_module
+
+    monkeypatch.setattr(handlers_module, "BOT_UPLOAD_LIMIT", 10)
+    await harness.feed(text_update("/export all"))
+    assert "50 MB dan katta" in harness.texts()[-1] and "docker compose cp bot:/data/exports/" in harness.texts()[-1]
+    assert len(harness.session.of(SendDocument)) == 1
+
+
+async def test_audit_and_status_show_backup(harness: BotHarness, archive: Archive) -> None:
+    await harness.feed(callback_update(FetchFile(media_id=archive.media[2]).pack()))  # audit yozuvi paydo bo'ladi
+    await harness.feed(text_update("/audit"))
+    audit = harness.texts()[-1]
+    assert "Audit jurnali" in audit and "media_fetch_requested" in audit
+    assert "O'chirish hodisalari" in audit and "#6" in audit and "tasdiqlangan" in audit
+    await harness.feed(text_update("/status"))
+    assert "Zaxira: hali yaratilmagan" in harness.texts()[-1]

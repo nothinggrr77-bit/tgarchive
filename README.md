@@ -6,9 +6,9 @@ akkauntingiz orqali admin bot bilan boshqariladigan, Linux VPS'da 24/7 ishlaydig
 - **archiver** — asosiy akkaunt bilan MTProto (Telethon) orqali ishlaydi: tarix importi, real vaqt, tahrirlar, o‘chirishlar, media.
 - **bot** — aiogram 3 admin bot; faqat `OWNER_ID` uchun. Bot jarayonida asosiy akkaunt session'i **yo‘q**.
 
-> **Holat:** 1–9-bosqichlar tayyor: archiver (tarix, real vaqt, tahrirlar, o‘chirishlar, media 50 MB gacha)
-> va admin bot (qidiruv, chatlar, o‘chirilganlar, media, katta fayllar, statistika, holat) serverda
-> Docker Compose bilan doimiy ishlaydi. Keyingisi — eksport va shifrlangan zaxira (10-bosqich). Batafsil: [docs/00-roadmap.md](docs/00-roadmap.md).
+> **Holat:** 1–10-bosqichlar tayyor: archiver (tarix, real vaqt, tahrirlar, o‘chirishlar, media 50 MB gacha),
+> admin bot (qidiruv, chatlar, o‘chirilganlar, media, eksport, audit, holat), kunlik age-shifrlangan zaxira
+> va tiklash. Docker Compose bilan doimiy ishlaydi. Keyingisi — integratsion testlar va tuzatishlar (11-bosqich). Batafsil: [docs/00-roadmap.md](docs/00-roadmap.md).
 >
 > Arxivlash siyosati: shaxsiy chat va guruhlar — to‘liq va doimiy; kanallar — ma’lumoti va
 > oxirgi 20 ta post; postlarga izohlar (reply'lar) — har biri saqlanadi.
@@ -40,6 +40,7 @@ docker compose exec archiver python -m tgarchive status
 | [07-realtime.md](docs/07-realtime.md) | 7-bosqich: real vaqt, tahrirlar, o‘chirishlar va ularning kafolat chegaralari |
 | [08-media.md](docs/08-media.md) | 8-bosqich: media arxivi, 50 MB chegara, katta fayllar, disk nazorati |
 | [09-bot.md](docs/09-bot.md) | 9-bosqich: admin bot — o‘rnatish, OWNER_ID, buyruqlar, qidiruv sintaksisi, xavfsizlik |
+| [10-backup-export.md](docs/10-backup-export.md) | 10-bosqich: zaxira kaliti, ko‘chirish, tekshirish, **tiklash**, eksport, audit, retention |
 
 ## Lokal o‘rnatish (Docker'siz)
 
@@ -88,6 +89,12 @@ tgarchive media stats             # yuklangan / navbatdagi / katta fayllar, disk
 tgarchive media large             # 50 MB dan katta, yuklanmagan fayllar ro'yxati
 tgarchive media fetch <ID>        # bittasini chegaraga qaramay yuklash
 tgarchive media verify [--checksum]   # fayllar diskda bormi / buzilmaganmi
+
+tgarchive backup create | list | keygen
+tgarchive backup verify <fayl> --identity <kalit|->
+tgarchive backup restore <fayl> --identity <kalit|->   # archiver va bot to'xtatilgan holda
+tgarchive export chat:7 after:2026-01-01 [json] [+media]   # yoki: all
+tgarchive retention show | set <chat_id> <kun|off>
 ```
 
 `tgarchive` o‘rniga `python -m tgarchive` ham ishlaydi. Boshqa `.env` fayl: `tgarchive --env-file /yo'l/.env ...`.

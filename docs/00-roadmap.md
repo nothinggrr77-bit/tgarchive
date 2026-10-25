@@ -11,34 +11,35 @@
 | 7 | Real vaqt hodisalari | ✅ | yangi xabar / tahrir / o‘chirish handler'lari, navbat, `catch_up`, o‘chirishni tekshirish (`probable` → `confirmed` / `revoked`), kanal oynasini real vaqtda aylantirish — [07-realtime.md](07-realtime.md) |
 | 8 | Media arxivi | ✅ | 50 MB chegara, katta fayllar ro‘yxati va `fetch`, takrorsiz yuklash, disk nazorati, sha256, yetishmayotgan fayllar, `media_trash` — [08-media.md](08-media.md) |
 | 9 | Admin bot va qidiruv | ✅ | aiogram bot (faqat OWNER_ID, faqat shaxsiy chat), qidiruv filtrlari, sahifalash, xabar tafsiloti, katta fayllarni yuklatish, alohida Docker xizmati — [09-bot.md](09-bot.md) |
-| 10 | Audit, eksport, backup | ⏭ keyingi | eksport (JSON/HTML), kunlik shifrlangan (age) zaxira, tiklash |
-| 11 | Testlar va xatolarni tuzatish | ⏳ | integratsion testlar (alohida test akkaunt), xato ssenariylari |
-| 12 | Deploy | 🟡 asosiy qismi tayyor | Dockerfile, docker-compose.yml (archiver + bot), [deploy.md](deploy.md); zaxira xizmati 10-bosqichda |
+| 10 | Audit, eksport, backup | ✅ | kunlik age-shifrlangan zaxira, tekshirish va tiklash, HTML/JSON eksport (/export), /audit, retention mexanizmi — [10-backup-export.md](10-backup-export.md) |
+| 11 | Testlar va xatolarni tuzatish | ⏭ keyingi | integratsion testlar (alohida test akkaunt), xato ssenariylari |
+| 12 | Deploy | 🟡 asosiy qismi tayyor | Dockerfile, docker-compose.yml (archiver + bot), [deploy.md](deploy.md); serverdagi birinchi haqiqiy build va yakuniy tekshiruv |
 | 13 | Monitoring, xavfsizlik auditi, yakuniy hujjatlar | ⏳ | ogohlantirishlar, xavfsizlik checklist (healthcheck allaqachon bor) |
 
 Egasi qarorlari: [01-requirements.md, 1.6](01-requirements.md#16-egasi-qarorlari-2026-10-25).
 
-## Tayyor fayllar (1–9-bosqich + deploy)
+## Tayyor fayllar (1–10-bosqich + deploy)
 
 ```
 .gitignore  .gitattributes  .dockerignore  .env.example  pyproject.toml  requirements.txt  requirements-dev.txt
 alembic.ini  README.md  Dockerfile  docker-compose.yml
 docs/       00-roadmap.md  01-requirements.md  02-architecture.md  03-data-model.md  05-account.md  06-history.md
-            07-realtime.md  08-media.md  09-bot.md  deploy.md  telegram-limits.md
+            07-realtime.md  08-media.md  09-bot.md  10-backup-export.md  deploy.md  telegram-limits.md
 src/tgarchive/
-  __init__.py  __main__.py  cli.py  config.py  exitcodes.py  fs.py  logging_setup.py  mediafiles.py  policy.py
-  archiver/    __init__.py  auth.py  client.py  convert.py  dialogs.py  history.py  media.py  realtime.py
-               service.py
+  __init__.py  __main__.py  backup.py  cli.py  config.py  crypto.py  exitcodes.py  export.py  fs.py
+  logging_setup.py  mediafiles.py  policy.py
+  archiver/    __init__.py  auth.py  client.py  convert.py  dialogs.py  history.py  maintenance.py  media.py
+               realtime.py  service.py
   bot/         __init__.py  app.py  callbacks.py  format.py  handlers.py  middleware.py  views.py
   db/          __init__.py  base.py  engine.py  enums.py  fts.py  media.py  meta.py  migrate.py  models.py
-               search.py  status.py  store.py  types.py
+               retention.py  search.py  status.py  store.py  types.py
   migrations/  __init__.py  env.py  script.py.mako
                versions/20261025_0001_initial_schema.py  versions/20261025_0002_account_binding.py
                versions/20261025_0003_history_sync.py  versions/20261025_0004_media_archive.py
 tests/
   conftest.py  factories.py  tl_objects.py  fake_telegram.py  fake_botapi.py  archive_fixture.py
-  test_account_binding.py  test_auth.py  test_bot.py  test_config.py  test_convert.py  test_dialogs.py  test_engine.py
-  test_fts.py  test_history.py  test_logging.py  test_media.py  test_migrations.py  test_policy.py  test_realtime.py
+  test_account_binding.py  test_auth.py  test_backup.py  test_bot.py  test_config.py  test_convert.py  test_dialogs.py  test_engine.py
+  test_export.py  test_fts.py  test_history.py  test_logging.py  test_media.py  test_migrations.py  test_policy.py  test_realtime.py
   test_search.py  test_service.py
   test_store_deletions.py  test_store_messages.py
   integration/test_live_account.py

@@ -21,9 +21,9 @@ from sqlalchemy import text
 from tgarchive import __version__
 from tgarchive.config import ArchiverSettings, BaseAppSettings, BotSettings, ConfigError, load_settings
 from tgarchive.db.engine import Database
-from tgarchive.db.meta import AccountMismatchError, bind_account, bound_account_id
+from tgarchive.db.meta import LAST_BACKUP_KEY, AccountMismatchError, bind_account, bound_account_id, get_json_meta
 from tgarchive.db.migrate import current_revision, head_revision, upgrade
-from tgarchive.db.status import ARCHIVER, format_summary, get_heartbeat, import_summary
+from tgarchive.db.status import ARCHIVER, format_backup_meta, format_summary, get_heartbeat, import_summary
 from tgarchive.db.store import add_audit
 from tgarchive.db.types import utcnow
 from tgarchive.exitcodes import EXIT_AUTH, EXIT_CONFIG, EXIT_OK, EXIT_RUNTIME
@@ -393,10 +393,12 @@ async def _status(settings: BaseAppSettings, limit_mb: int | None = None) -> int
             summary = await import_summary(session)
             heartbeat = await get_heartbeat(session, ARCHIVER)
             media = await media_summary(session)
+            backup = await get_json_meta(session, LAST_BACKUP_KEY)
     finally:
         await db.dispose()
     print(format_summary(summary, heartbeat, utcnow()))
     print(format_media_summary(media, limit_mb))
+    print(format_backup_meta(backup, utcnow()))
     disk = _disk_line(settings.paths.media)
     if disk:
         print(disk)
@@ -493,6 +495,219 @@ def _cmd_health(args: argparse.Namespace) -> int:
     return asyncio.run(_health(settings, args.component, args.max_age))
 
 
+# -------------------------------------------------- zaxira, eksport, retention
+
+BACKUP_SAFE_AGE_S = 180
+
+
+def _resolve_backup(path_arg: str, settings: BaseAppSettings) -> Path:
+    path = Path(path_arg)
+    if not path.exists() and (settings.paths.backups / path_arg).exists():
+        path = settings.paths.backups / path_arg
+    if not path.is_file():
+        raise ConfigError(f"zaxira fayli topilmadi: {path_arg}")
+    return path
+
+
+def _identities(path_arg: str | None) -> list | None:
+    if not path_arg:
+        return None
+    from tgarchive.crypto import CryptoKeyError, load_identities, parse_identities
+
+    try:
+        if path_arg == "-":  # kalit stdin'dan: diskka yoki konteynerga yozilmaydi
+            return parse_identities(sys.stdin.read())
+        return load_identities(Path(path_arg))
+    except CryptoKeyError as exc:
+        raise ConfigError(str(exc)) from None
+
+
+async def _running_components(settings: BaseAppSettings) -> list[str]:
+    """Hozir ishlayotgan (heartbeat yangi) komponentlar — tiklashdan oldin to'xtatilishi shart."""
+    if not settings.paths.db.exists():
+        return []
+    db = _open_db(settings)
+    running = []
+    try:
+        async with db.read() as session:
+            for component in (ARCHIVER, "bot"):
+                beat = await get_heartbeat(session, component)
+                if beat is None or beat.state not in HEALTHY_STATES:
+                    continue
+                if (utcnow() - beat.last_beat_at).total_seconds() < BACKUP_SAFE_AGE_S:
+                    running.append(component)
+    except Exception:
+        return []
+    finally:
+        await db.dispose()
+    return running
+
+
+async def _backup_create(settings: ArchiverSettings) -> int:
+    from tgarchive.archiver.maintenance import Maintenance
+    from tgarchive.db.media import format_size
+
+    db = _open_db(settings)
+    try:
+        info = await Maintenance(db, settings).backup(utcnow())
+    finally:
+        await db.dispose()
+    if info is None:
+        print("Zaxira yaratilmadi — sabab log'da va 'tgarchive status' da.", file=sys.stderr)
+        return EXIT_RUNTIME
+    lock = "shifrlangan (age)" if info.encrypted else "SHIFRLANMAGAN — BACKUP_AGE_RECIPIENTS ni sozlang"
+    print(f"Zaxira tayyor: {info.path}\n  hajmi {format_size(info.size)}, {lock}")
+    return EXIT_OK
+
+
+def _cmd_backup(args: argparse.Namespace) -> int:
+    from tgarchive.backup import BackupError, list_backups, restore_backup, verify_backup
+    from tgarchive.db.media import format_size
+
+    if args.backup_command == "keygen":
+        from tgarchive.crypto import generate_keypair
+
+        public, secret = generate_keypair()
+        print("Ochiq kalit — serverdagi .env ga:  BACKUP_AGE_RECIPIENTS=" + public)
+        print("Maxfiy kalit — FAQAT o'z kompyuteringizda saqlang (serverda emas!), tiklash uchun kerak:")
+        print("# created: " + utcnow().isoformat())
+        print("# public key: " + public)
+        print(secret)
+        return EXIT_OK
+
+    if args.backup_command == "create":
+        settings = load_settings(ArchiverSettings, args.env_file)
+        setup_logging(settings.log_level, "console", secrets=settings.secret_values())
+        _prepare_database(settings)
+        return asyncio.run(_backup_create(settings))
+
+    base = load_settings(BaseAppSettings, args.env_file)
+    if args.backup_command == "list":
+        items = list_backups(base.paths.backups)
+        if not items:
+            print(f"Zaxira yo'q: {base.paths.backups}")
+        for item in items:
+            lock = "age" if item.encrypted else "ochiq"
+            print(f"{item.created_at:%Y-%m-%d %H:%M} UTC  {format_size(item.size):>9}  {lock:<5}  {item.path.name}")
+        return EXIT_OK
+
+    path = _resolve_backup(args.file, base)
+    identities = _identities(args.identity)
+    try:
+        if args.backup_command == "verify":
+            manifest = verify_backup(path, identities, work_root=base.paths.backups)
+            print(f"Zaxira butun: {path.name}")
+            print(
+                f"  yaratilgan {manifest['created_at']}, migratsiya {manifest.get('revision')}, "
+                f"tgarchive {manifest.get('tgarchive')}"
+            )
+            print("  " + ", ".join(f"{k}: {v}" for k, v in manifest.get("counts", {}).items()))
+            return EXIT_OK
+
+        running = asyncio.run(_running_components(base))
+        if running and not args.force:
+            print(
+                f"Hozir ishlayapti: {', '.join(running)}. Tiklashdan oldin to'xtating:\n"
+                "  docker compose stop archiver bot",
+                file=sys.stderr,
+            )
+            return EXIT_RUNTIME
+        if not args.yes:
+            question = f"Joriy baza va session {path.name} bilan almashtiriladi (eskisi yonida saqlanadi). 'ha' deb yozing: "
+            if input(question).strip().lower() != "ha":
+                print("Bekor qilindi.")
+                return EXIT_OK
+        report = restore_backup(path, base, identities)
+    except BackupError as exc:
+        print(f"Xato: {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
+    upgrade(base.database_url)
+    print(f"Tiklandi: {path.name} (yaratilgan {report.manifest['created_at']})")
+    for item in report.restored:
+        print(f"  + {item}")
+    for item in report.moved_aside:
+        print(f"  eski nusxa: {item}")
+    if report.media_files:
+        print(f"  media fayllar: {report.media_files}")
+    print("Endi: docker compose up -d   (session eskirgan bo'lsa: tgarchive login)")
+    return EXIT_OK
+
+
+async def _export(args: argparse.Namespace, settings: BaseAppSettings) -> int:
+    from zoneinfo import ZoneInfo
+
+    from tgarchive.db.media import format_size
+    from tgarchive.export import export_messages, parse_export_args
+
+    request, errors = parse_export_args(" ".join(args.filters), ZoneInfo(settings.display_timezone))
+    if request is None:
+        print("Eksport so'rovida xato:\n" + "\n".join(f"  - {e}" for e in errors), file=sys.stderr)
+        return EXIT_CONFIG
+    db = _open_db(settings)
+    try:
+        result = await export_messages(db, settings, request, actor="owner")
+    finally:
+        await db.dispose()
+    print(
+        f"Eksport tayyor: {result.path}\n  {result.messages} xabar, {result.chats} chat, "
+        f"fayllar {result.media_included}, hajmi {format_size(result.size)}"
+    )
+    return EXIT_OK
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    settings = load_settings(BaseAppSettings, args.env_file)
+    if not settings.paths.db.exists():
+        print("Baza hali yaratilmagan: tgarchive db-upgrade")
+        return EXIT_RUNTIME
+    return asyncio.run(_export(args, settings))
+
+
+_OFF = ("off", "0")
+
+
+async def _retention(args: argparse.Namespace, settings: BaseAppSettings) -> int:
+    from sqlalchemy import select as sa_select
+
+    from tgarchive.db.models import Chat
+    from tgarchive.db.retention import set_chat_retention
+
+    db = _open_db(settings)
+    try:
+        if args.retention_command == "set":
+            days = None if args.days.lower() in _OFF else int(args.days)
+            if not await set_chat_retention(db, args.chat_id, days):
+                print(f"Chat topilmadi: {args.chat_id}")
+                return EXIT_RUNTIME
+            print(f"Chat {args.chat_id}: " + (f"{days} kun" if days else "doimiy (muddat olib tashlandi)"))
+            return EXIT_OK
+        print(f"Global RETENTION_DAYS: {settings.retention_days or 'berilmagan — doimiy saqlash'}")
+        async with db.read() as session:
+            rows = list(
+                await session.execute(
+                    sa_select(Chat.chat_id, Chat.title, Chat.retention_days).where(Chat.retention_days.is_not(None))
+                )
+            )
+        for chat_id, title, days in rows:
+            print(f"  {chat_id}  {title or '-'}: {days} kun")
+        if not rows:
+            print("  Chat bo'yicha alohida muddat yo'q.")
+    finally:
+        await db.dispose()
+    return EXIT_OK
+
+
+def _cmd_retention(args: argparse.Namespace) -> int:
+    settings = load_settings(BaseAppSettings, args.env_file)
+    if not settings.paths.db.exists():
+        print("Baza hali yaratilmagan: tgarchive db-upgrade")
+        return EXIT_RUNTIME
+    if args.retention_command == "set" and args.days.lower() not in _OFF and not args.days.isdigit():
+        print("Kunlar soni butun son yoki 'off' bo'lishi kerak", file=sys.stderr)
+        return EXIT_CONFIG
+    return asyncio.run(_retention(args, settings))
+
+
 # ----------------------------------------------------------------------- main
 
 
@@ -542,6 +757,36 @@ def _build_parser() -> argparse.ArgumentParser:
     verify = media_sub.add_parser("verify", help="yuklangan fayllar diskda bormi")
     verify.add_argument("--checksum", action="store_true", help="sha256 bilan to'liq tekshirish (sekin)")
     media.set_defaults(handler=_cmd_media)
+
+    backup = sub.add_parser("backup", help="zaxira: yaratish, ro'yxat, tekshirish, tiklash, kalit")
+    backup_sub = backup.add_subparsers(dest="backup_command", required=True)
+    backup_sub.add_parser("create", help="hozir zaxira yaratish")
+    backup_sub.add_parser("list", help="mavjud zaxiralar")
+    backup_sub.add_parser("keygen", help="age kalit juftligini yaratish (maxfiy kalitni serverda saqlamang)")
+    for name, help_text in (("verify", "zaxirani ochib, butunligini tekshirish"), ("restore", "zaxiradan tiklash")):
+        cmd = backup_sub.add_parser(name, help=help_text)
+        cmd.add_argument("file", help="zaxira fayli (to'liq yo'l yoki BACKUP_DIR dagi nomi)")
+        cmd.add_argument("--identity", help="age maxfiy kalit fayli yoki - (stdin'dan o'qish)")
+        if name == "restore":
+            cmd.add_argument("--force", action="store_true", help="ishlayotgan komponentlarni tekshirmaslik")
+            cmd.add_argument("--yes", action="store_true", help="tasdiqlash so'ralmasin")
+    backup.set_defaults(handler=_cmd_backup)
+
+    export = sub.add_parser(
+        "export",
+        help="eksport (zip: HTML yoki JSON)",
+        description="Filtrlar /search bilan bir xil. Qo'shimcha: json, html, +media, all.",
+    )
+    export.add_argument("filters", nargs="*", help="masalan: chat:7 after:2026-01-01 json +media")
+    export.set_defaults(handler=_cmd_export)
+
+    retention = sub.add_parser("retention", help="saqlash muddati (sukut: doimiy)")
+    retention_sub = retention.add_subparsers(dest="retention_command", required=True)
+    retention_sub.add_parser("show", help="joriy sozlamalar")
+    ret_set = retention_sub.add_parser("set", help="chat bo'yicha muddat: kunlar yoki off")
+    ret_set.add_argument("chat_id", type=int)
+    ret_set.add_argument("days", help="kunlar soni yoki off")
+    retention.set_defaults(handler=_cmd_retention)
     return parser
 
 

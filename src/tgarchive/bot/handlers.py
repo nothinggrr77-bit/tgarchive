@@ -6,6 +6,8 @@ bu yerga umuman yetkazmaydi.
 
 from __future__ import annotations
 
+import asyncio
+
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import Command, CommandObject, CommandStart
@@ -25,9 +27,12 @@ from tgarchive.bot.callbacks import (
     SendFile,
     Versions,
 )
-from tgarchive.bot.views import FileToSend, View, Views
+from tgarchive.bot.format import esc
+from tgarchive.bot.views import BOT_UPLOAD_LIMIT, EXPORT_HELP, FileToSend, View, Views
+from tgarchive.db.media import format_size
 from tgarchive.db.enums import MediaType
 from tgarchive.db.search import parse_search
+from tgarchive.export import export_messages, parse_export_args
 from tgarchive.logging_setup import get_logger
 
 log = get_logger(__name__)
@@ -39,7 +44,9 @@ COMMANDS = [
     BotCommand(command="deleted", description="O'chirilgan xabarlar"),
     BotCommand(command="media", description="Media va katta fayllar"),
     BotCommand(command="stats", description="Arxiv statistikasi"),
-    BotCommand(command="status", description="Archiver va server holati"),
+    BotCommand(command="status", description="Archiver, zaxira va server holati"),
+    BotCommand(command="export", description="Eksport: chat yoki sana oralig'i"),
+    BotCommand(command="audit", description="Audit jurnali"),
     BotCommand(command="help", description="Yordam va qidiruv sintaksisi"),
 ]
 
@@ -64,6 +71,7 @@ async def set_owner_commands(bot: Bot, owner_id: int) -> None:
 def build_router(views: Views) -> Router:
     router = Router(name="tgarchive")
     owner = views.settings.owner_id
+    export_lock = asyncio.Lock()
 
     async def send(bot: Bot, view: View) -> None:
         await bot.send_message(owner, view.text, reply_markup=view.keyboard)
@@ -134,8 +142,38 @@ def build_router(views: Views) -> Router:
         await send(bot, await views.status())
 
     @router.message(Command("export"))
-    async def on_export(message: Message, bot: Bot) -> None:
-        await bot.send_message(owner, "Eksport 10-bosqichda qo'shiladi. Hozircha: /search va /chats.")
+    async def on_export(message: Message, bot: Bot, command: CommandObject) -> None:
+        if not command.args:
+            await bot.send_message(owner, EXPORT_HELP)
+            return
+        request, errors = parse_export_args(command.args, views.tz)
+        if request is None:
+            await bot.send_message(owner, "Eksportda xato:\n" + "\n".join(f"• {esc(e)}" for e in errors))
+            return
+        if export_lock.locked():
+            await bot.send_message(owner, "Boshqa eksport tayyorlanmoqda — tugashini kuting.")
+            return
+        async with export_lock:
+            await bot.send_message(owner, f"⏳ Eksport tayyorlanmoqda: {esc(request.query.describe())}…")
+            result = await export_messages(views.db, views.settings, request, actor="owner", actor_id=owner)
+        caption = (
+            f"📦 {result.messages} xabar, {result.chats} chat, fayllar {result.media_included}"
+            f" · {format_size(result.size)}"
+        )
+        if result.messages == 0:
+            await bot.send_message(owner, "Filtrga mos xabar yo'q — eksport bo'sh.")
+        elif result.size <= BOT_UPLOAD_LIMIT:
+            await bot.send_document(owner, FSInputFile(result.path), caption=caption)
+        else:
+            await bot.send_message(
+                owner,
+                f"{caption}\nFayl 50 MB dan katta — bot yubora olmaydi. Serverda: <code>{esc(result.path.name)}</code>\n"
+                f"Olish: <code>docker compose cp bot:/data/exports/{esc(result.path.name)} .</code>",
+            )
+
+    @router.message(Command("audit"))
+    async def on_audit(message: Message, bot: Bot) -> None:
+        await send(bot, await views.audit())
 
     @router.message(F.text & ~F.text.startswith("/"))
     async def on_text(message: Message, bot: Bot) -> None:

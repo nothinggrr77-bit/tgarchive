@@ -191,8 +191,8 @@ Holatlar: `pending → downloading → done`, yoki `failed` (urinishlar tugadi),
 
 ## 11. Saqlash muddati va kanal oynasi
 
-**Shaxsiy ma’lumotlar doimiy saqlanadi** (egasi qarori): `RETENTION_DAYS` bo‘sh. Agar kelajakda
-yoqilsa, muddati o‘tgan xabarlar, ularning versiyalari, media qatorlari va **fayllari** o‘chiriladi;
+**Shaxsiy ma’lumotlar doimiy saqlanadi** (egasi qarori): `RETENTION_DAYS` bo‘sh. Mexanizm 10-bosqichda
+qo‘shilgan ([db/retention.py](../src/tgarchive/db/retention.py), `tgarchive retention set`). Agar yoqilsa, muddati o‘tgan xabarlar, ularning versiyalari, media qatorlari va **fayllari** o‘chiriladi;
 `audit_log` ga faqat sonlar yoziladi (mazmun emas). Xuddi shu fayl boshqa xabar tomonidan ishlatilsa
 (`tg_media_id` bir xil), fayl saqlanib qoladi.
 

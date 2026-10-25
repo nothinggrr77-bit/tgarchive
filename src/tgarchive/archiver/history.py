@@ -94,6 +94,7 @@ class Job:
     chat_id: int
     chat_type: ChatType
     title: str | None
+    retention_days: int | None = None  # chat yoki global saqlash muddati
 
 
 class InaccessibleChat(Exception):
@@ -158,7 +159,8 @@ class HistoryImporter:
                 forward.append(Job(JobKind.FORWARD, chat.chat_id, chat.chat_type, chat.title))
             # HISTORY_ENABLED=false: eski tarix olinmaydi, faqat yangi xabarlar (forward) va kanal oynasi
             if self.settings.history_enabled and state.backfill_status is not SyncStatus.DONE:
-                backfill.append(Job(JobKind.BACKFILL, chat.chat_id, chat.chat_type, chat.title))
+                retention = chat.retention_days or self.settings.retention_days
+                backfill.append(Job(JobKind.BACKFILL, chat.chat_id, chat.chat_type, chat.title, retention))
 
         def order(job: Job) -> tuple[int, int]:
             return (_TYPE_PRIORITY[job.chat_type], job.chat_id)
@@ -241,7 +243,7 @@ class HistoryImporter:
 
     async def _backfill_slice(self, job: Job, entity: Any) -> bool:
         cursor = await self._ensure_boundary(job, entity)
-        cutoff = self._cutoff()
+        cutoff = self._cutoff(job.retention_days)
         for _ in range(BACKFILL_SLICE_PAGES):
             if self.stop.is_set():
                 return True
@@ -304,9 +306,13 @@ class HistoryImporter:
             imported = state.backfill_imported
         log.info("backfill_done", chat_id=chat_id, imported=imported)
 
-    def _cutoff(self) -> datetime | None:
-        days = self.settings.history_max_age_days
-        return self._clock() - timedelta(days=days) if days else None
+    def _cutoff(self, retention_days: int | None = None) -> datetime | None:
+        """Backfill shu vaqtdan eskisini olmaydi: HISTORY_MAX_AGE_DAYS va saqlash muddatining yangirog'i.
+
+        Saqlash muddati (retention) bo'yicha o'chiriladigan xabarlar qayta import qilinmasin.
+        """
+        limits = [d for d in (self.settings.history_max_age_days, retention_days) if d]
+        return self._clock() - timedelta(days=min(limits)) if limits else None
 
     # --------------------------------------------------------------- forward
 

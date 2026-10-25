@@ -24,6 +24,7 @@ _SENSITIVE_KEY_RE = re.compile(
 )
 # \b ishlatilmaydi: URL ichida token "bot123456:..." ko'rinishida, "t" va "1" orasida chegara yo'q.
 _BOT_TOKEN_RE = re.compile(r"(?<!\d)\d{5,}:[A-Za-z0-9_-]{30,}")
+_AGE_SECRET_RE = re.compile(r"AGE-SECRET-KEY-1[0-9A-Z]{20,}")
 _MIN_SECRET_LEN = 6
 
 
@@ -39,7 +40,7 @@ class SecretRedactor:
     def redact_text(self, text: str) -> str:
         for value in sorted(self._values, key=len, reverse=True):
             text = text.replace(value, MASK)
-        return _BOT_TOKEN_RE.sub(MASK, text)
+        return _AGE_SECRET_RE.sub(MASK, _BOT_TOKEN_RE.sub(MASK, text))
 
     def __call__(self, _logger: Any, _method: str, event_dict: dict[str, Any]) -> dict[str, Any]:
         """structlog processor: render qilishdan oldin kalitlarni tekshiradi."""

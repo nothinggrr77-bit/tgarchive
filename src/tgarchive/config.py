@@ -71,6 +71,10 @@ class BaseAppSettings(BaseSettings):
     db_busy_timeout_ms: int = Field(10_000, ge=100, le=600_000)
     display_timezone: str = "Asia/Tashkent"
     retention_days: int | None = Field(None, ge=1)
+    # Eksport fayllari (shaxsiy ma'lumot nusxasi) shuncha kundan keyin o'chiriladi
+    export_keep_days: int = Field(7, ge=1, le=365)
+    # Eksport arxiviga qo'shiladigan media fayllarining umumiy chegarasi
+    export_max_media_mb: int = Field(500, ge=0, le=100_000)
 
     @field_validator("log_level", mode="before")
     @classmethod
@@ -165,10 +169,30 @@ class ArchiverSettings(BaseAppSettings):
 
     heartbeat_interval_s: int = Field(30, ge=5, le=3600)
 
+    # Zaxira: baza + session (va ixtiyoriy media), age ochiq kaliti bilan shifrlanadi
+    backup_enabled: bool = True
+    backup_interval_h: int = Field(24, ge=1, le=24 * 30)
+    backup_keep: int = Field(7, ge=1, le=365)
+    backup_age_recipients: Annotated[list[str], NoDecode] = []
+    backup_include_media: bool = False
+
     @field_validator("chat_allowlist", "chat_denylist", mode="before")
     @classmethod
     def _parse_id_lists(cls, value: Any) -> Any:
         return _split_csv(value)
+
+    @field_validator("backup_age_recipients", mode="before")
+    @classmethod
+    def _split_recipients(cls, value: Any) -> Any:
+        return _split_csv(value)
+
+    @field_validator("backup_age_recipients")
+    @classmethod
+    def _check_recipients(cls, value: list[str]) -> list[str]:
+        from tgarchive.crypto import parse_recipients
+
+        parse_recipients(value)  # noto'g'ri kalit — ishga tushishdayoq xato
+        return value
 
     @field_validator("tg_api_hash")
     @classmethod
