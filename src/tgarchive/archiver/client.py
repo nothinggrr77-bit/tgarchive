@@ -40,7 +40,9 @@ def create_client(settings: ArchiverSettings, *, receive_updates: bool = False) 
     """Client yaratadi (ulanmaydi). Session fayli shu payt yaratiladi, agar yo'q bo'lsa.
 
     ``receive_updates=False`` — CLI buyruqlari uchun (login, dialogs): real vaqt
-    hodisalari kerak emas. Archiver xizmati 7-bosqichda ``True`` bilan ishga tushadi.
+    hodisalari kerak emas. Archiver xizmati ``REALTIME_ENABLED`` bo'lsa ``True`` bilan ishlaydi:
+    ``catch_up`` — qayta ulanganda o'tkazib yuborilgan hodisalarni so'rab olish,
+    ``sequential_updates`` — hodisalar kelish tartibida qayta ishlanadi (yangi xabar tahriridan oldin).
     """
     ensure_private_dir(settings.paths.sessions)
     client = TelegramClient(
@@ -57,6 +59,7 @@ def create_client(settings: ArchiverSettings, *, receive_updates: bool = False) 
         auto_reconnect=True,
         receive_updates=receive_updates,
         catch_up=receive_updates,
+        sequential_updates=receive_updates,
         base_logger="telethon",
     )
     secure_session_files(settings.session_path)

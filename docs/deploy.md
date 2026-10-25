@@ -241,7 +241,7 @@ docker compose up -d
 
 ## Hozirgi versiya cheklovlari
 
-- Yangi xabarlar har 10 daqiqada so‘rov bilan olinadi; **real vaqt, tahrirlar tarixi va shaxsiy chatlardagi o‘chirishlarni aniqlash — 7-bosqichda**.
+- Real vaqt ishlaydi (yangi xabarlar, tahrirlar, o‘chirishlar). Archiver o‘chiq bo‘lgan paytdagi o‘chirishlar faqat Telegram qayta ulanishda bergan bo‘lsa qayd etiladi — [07-realtime.md](07-realtime.md).
 - Media fayllar hali yuklanmaydi — 8-bosqich (navbat yig‘ilib boradi, keyin yuklanadi).
 - Admin bot — 9-bosqich.
 - Avtomatik shifrlangan zaxira — 10-bosqich.

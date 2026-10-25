@@ -57,7 +57,7 @@ Manba: core.telegram.org/api/updates
 | 6.1 | Yangilanishlar `pts` ketma-ketligi bilan keladi; uzilish bo‘lsa `getDifference` / `getChannelDifference` bilan to‘ldiriladi | Telethon buni o‘zi bajaradi (`catch_up`) |
 | 6.2 | Uzilish juda uzun bo‘lsa `differenceTooLong` / `channelDifferenceTooLong` qaytadi — holatni qaytadan olish kerak, oradagi hodisalar yo‘qoladi | Biz qayta ishga tushganda `(high_water_id, eng_yangi]` ni getHistory bilan to‘ldiramiz; yo‘qolgan **o‘chirish hodisalari** tiklanmaydi |
 | 6.3 | "Ba’zi hollarda API ayrim kanal/superguruhlar uchun yangilanish yuborishni to‘xtatishi yoki kamaytirishi mumkin" | Davriy solishtirish (reconcile) — har kanalning eng yangi sahifasini tekshirish |
-| 6.4 | Rasmiy klientlar ochiq turgan ko‘pi bilan 10 ta kanalni `getChannelDifference` bilan so‘rab turadi | Reconcile oralig‘i konservativ bo‘ladi (7-bosqichda sozlanadi) |
+| 6.4 | Rasmiy klientlar ochiq turgan ko‘pi bilan 10 ta kanalni `getChannelDifference` bilan so‘rab turadi | Biz kanallarni doimiy so‘ramaymiz: dialoglar sinxroni har 10 daqiqada, kanal oynasi har soatda (`SYNC_INTERVAL_S`, `CHANNEL_REFRESH_INTERVAL_S`) |
 
 ## 7. O‘chirish hodisalari — tekshirildi
 
@@ -105,7 +105,7 @@ Manba: core.telegram.org/api/updates
 |---|---|---|
 | 10a.1 | Kanal postiga izohlar kanalning o‘zida emas, unga bog‘langan **muhokama guruhida** (superguruh) saqlanadi; guruhda postning avtomatik nusxasi bo‘ladi | Izohlar o‘sha guruh chati ostida yoziladi; post nusxasi kontekst sifatida qoladi |
 | 10a.2 | Izohlar `messages.getReplies` orqali olinadi (Telethon: `iter_messages(kanal, reply_to=post_id)`) | Har bir saqlangan post uchun alohida so‘rovlar — FloodWait hisobga olinadi |
-| 10a.3 | Muhokama guruhiga a’zo bo‘lmasangiz, yangi izohlar real vaqtda kelmasligi mumkin | Oynadagi postlar izohlari davriy qayta tekshiriladi (7-bosqich) |
+| 10a.3 | Muhokama guruhiga a’zo bo‘lmasangiz, yangi izohlar real vaqtda kelmasligi mumkin | Oynadagi postlar izohlari har soatda qayta tekshiriladi (`CHANNEL_REFRESH_INTERVAL_S`) |
 | 10a.4 | Muhokama guruhi bo‘lmagan kanalda izoh yo‘q | — |
 
 Eslatma: 10a.1–10a.3 6-bosqichda haqiqiy akkauntda integratsion test bilan tekshiriladi.

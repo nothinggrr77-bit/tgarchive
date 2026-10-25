@@ -113,7 +113,7 @@ Haqiqiy akkaunt bilan ixtiyoriy test: `TGARCHIVE_INTEGRATION=1 pytest tests/inte
 
 ## Ma’lum cheklovlar
 
-- **Real vaqt hodisalari hali yo‘q (7-bosqich).** Yangi xabarlar har `SYNC_INTERVAL_S` (10 daqiqa) da so‘rov bilan olinadi. Shu oraliqda yuborilib-o‘chirilgan xabar arxivga tushmaydi. Shaxsiy chat va guruhlarda **tahrirlar va o‘chirishlar hali kuzatilmaydi** — faqat kanal oynasida o‘chirish aniqlanadi.
+- Real vaqt hodisalari (yangi xabar darhol, tahrirlar, o‘chirishlar) — [07-realtime.md](07-realtime.md). Bu bosqichdagi so‘rovli sinxron endi o‘tkazib yuborilgan hodisalar uchun solishtirish vazifasini bajaradi.
 - Media fayllar hali yuklanmaydi (8-bosqich): `media` jadvalida `pending` navbat yig‘iladi.
 - Kanal oynasi yangi postlar har tekshiruvda 20 tadan ko‘p kelsa, oraliqdagi postlar umuman saqlanmaydi — bu "oxirgi 20 ta" qoidasining natijasi.
 - Arxivdan chiqib ketgan (`left`) yoki o‘chirilgan chatlar dialoglar ro‘yxatidan yo‘qoladi; ularning oldin arxivlangan xabarlari qoladi.

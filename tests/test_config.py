@@ -133,3 +133,26 @@ def test_history_page_size_respects_telegram_limit(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("HISTORY_PAGE_SIZE", "500")
     with pytest.raises(ConfigError, match="HISTORY_PAGE_SIZE"):
         load_settings(ArchiverSettings, env_file=None)
+
+
+def test_env_example_with_only_required_values_loads(tmp_path: Path) -> None:
+    """.env.example dan nusxa olib faqat majburiy qiymatlarni to'ldirish yetarli bo'lishi kerak."""
+    example = (Path(__file__).parent.parent / ".env.example").read_text(encoding="utf-8")
+    filled = example.replace("TG_API_ID=\n", "TG_API_ID=12345\n").replace(
+        "TG_API_HASH=\n", "TG_API_HASH=0123456789abcdef0123456789abcdef\n"
+    )
+    env = tmp_path / ".env"
+    env.write_text(filled, encoding="utf-8")
+
+    settings = load_settings(ArchiverSettings, env)
+    assert settings.history_max_age_days is None  # "HISTORY_MAX_AGE_DAYS=" — bo'sh
+    assert settings.chat_allowlist == [] and settings.channel_keep_posts == 20
+    assert settings.realtime_enabled is True
+
+
+def test_empty_required_value_reports_missing(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("TG_API_ID=\nTG_API_HASH=\n", encoding="utf-8")
+    with pytest.raises(ConfigError) as exc:
+        load_settings(ArchiverSettings, env)
+    assert "TG_API_ID: majburiy, lekin berilmagan" in str(exc.value)

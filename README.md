@@ -6,9 +6,9 @@ akkauntingiz orqali admin bot bilan boshqariladigan, Linux VPS'da 24/7 ishlaydig
 - **archiver** — asosiy akkaunt bilan MTProto (Telethon) orqali ishlaydi: tarix importi, real vaqt, tahrirlar, o‘chirishlar, media.
 - **bot** — aiogram 3 admin bot; faqat `OWNER_ID` uchun. Bot jarayonida asosiy akkaunt session'i **yo‘q**.
 
-> **Holat:** 1–6-bosqichlar tayyor va archiver serverda doimiy ishlay oladi (Docker Compose).
-> Tarix importi ishlaydi; yangi xabarlar har 10 daqiqada olinadi. Real vaqt hodisalari, tahrirlar
-> va o‘chirishlarni kuzatish — 7-bosqich. Batafsil: [docs/00-roadmap.md](docs/00-roadmap.md).
+> **Holat:** 1–7-bosqichlar tayyor va archiver serverda doimiy ishlay oladi (Docker Compose).
+> Tarix importi, real vaqt hodisalari, tahrirlar tarixi va o‘chirilgan xabarlarni qayd etish ishlaydi.
+> Keyingisi — media fayllarni yuklash (8-bosqich). Batafsil: [docs/00-roadmap.md](docs/00-roadmap.md).
 >
 > Arxivlash siyosati: shaxsiy chat va guruhlar — to‘liq va doimiy; kanallar — ma’lumoti va
 > oxirgi 20 ta post; postlarga izohlar (reply'lar) — har biri saqlanadi.
@@ -37,6 +37,7 @@ docker compose exec archiver python -m tgarchive status
 | [03-data-model.md](docs/03-data-model.md) | Jadvallar, versiyalash, o‘chirilganlik holatlari, FTS, indekslar |
 | [05-account.md](docs/05-account.md) | 5-bosqich: akkauntni ulash, dialoglar, adapter |
 | [06-history.md](docs/06-history.md) | 6-bosqich: tarix importi, checkpoint, kanal oynasi, izohlar, xizmat |
+| [07-realtime.md](docs/07-realtime.md) | 7-bosqich: real vaqt, tahrirlar, o‘chirishlar va ularning kafolat chegaralari |
 
 ## Lokal o‘rnatish (Docker'siz)
 

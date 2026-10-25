@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy import select
-from telethon import errors
+from telethon import errors, events
 from telethon.tl import types
 
 from factories import sqlite_url
@@ -23,6 +23,7 @@ from tgarchive.db.meta import bind_account, bound_account_id
 from tgarchive.db.migrate import upgrade
 from tgarchive.db.models import ChatSyncState
 from tgarchive.db.status import ARCHIVER, beat, get_heartbeat, import_summary
+from tgarchive.db.store import get_message
 from tgarchive.db.types import utcnow
 from tgarchive.exitcodes import EXIT_AUTH, EXIT_OK, EXIT_RUNTIME
 from tl_objects import ME_ID, channel, message, user
@@ -211,3 +212,41 @@ async def test_status_shows_auth_error_reason(tmp_path: Path) -> None:
         text = format_summary(await import_summary(session), await get_heartbeat(session, ARCHIVER), utcnow())
     await db.dispose()
     assert "Sabab: session yo'q: avval tgarchive login" in text
+
+
+# ------------------------------------------------------------ real vaqt
+
+
+async def test_handlers_registered_before_connect_and_catch_up_is_not_lost(tmp_path: Path) -> None:
+    cfg = with_session_file(settings(tmp_path))
+    tg = telegram()
+    # Ulanish paytida catch_up olib keladigan hodisa: tarixda yo'q, faqat real vaqtdan keladi
+    tg.on_connect = [(events.NewMessage, events.NewMessage.Event(message(30, peer=types.PeerUser(7))))]
+
+    assert await ArchiverService(cfg, client_factory=lambda _: tg, sleep=RecordingSleep()).run(once=True) == EXIT_OK
+
+    order = [name for name, _chat, _kw in tg.calls if name in ("add_event_handler", "connect")]
+    assert order[:4] == ["add_event_handler"] * 3 + ["connect"]
+    assert tg.handlers == []  # to'xtashda olib tashlangan
+    db = await open_db(cfg)
+    async with db.read() as session:
+        caught = await get_message(session, 7, 30)
+        heartbeat = await get_heartbeat(session, ARCHIVER)
+    await db.dispose()
+    assert caught is not None and caught.source.value == "realtime"
+    assert heartbeat.details["realtime"]["events"]["created"] == 1
+
+
+async def test_realtime_can_be_disabled(tmp_path: Path) -> None:
+    cfg = with_session_file(settings(tmp_path, realtime_enabled=False))
+    tg = telegram()
+    assert await ArchiverService(cfg, client_factory=lambda _: tg, sleep=RecordingSleep()).run(once=True) == EXIT_OK
+    assert tg.count("add_event_handler") == 0
+
+
+async def test_auth_failure_unregisters_handlers_and_disconnects(tmp_path: Path) -> None:
+    cfg = with_session_file(settings(tmp_path))
+    tg = telegram()
+    tg.authorized = False
+    assert await ArchiverService(cfg, client_factory=lambda _: tg, sleep=RecordingSleep()).run(once=True) == EXIT_AUTH
+    assert tg.handlers == [] and not tg.connected

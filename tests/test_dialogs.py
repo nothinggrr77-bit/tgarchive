@@ -123,3 +123,13 @@ async def test_session_file_is_private(tmp_path: Path) -> None:
         assert cfg.paths.sessions.stat().st_mode & 0o077 == 0
     finally:
         client.session.close()
+
+
+async def test_service_client_receives_updates_in_order(tmp_path: Path) -> None:
+    client = create_client(settings(tmp_path), receive_updates=True)
+    try:
+        assert client._no_updates is False
+        assert client._sequential_updates is True
+        assert client._catch_up is True
+    finally:
+        client.session.close()

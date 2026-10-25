@@ -486,14 +486,46 @@ async def apply_deletions(
     return events
 
 
-def _revoke_deletion(session: AsyncSession, message: Message, now: datetime) -> None:
+async def revoke_deletions(
+    session: AsyncSession,
+    chat_id: int,
+    message_ids: Iterable[int],
+    *,
+    source: DeletionSource = DeletionSource.VERIFICATION,
+) -> list[int]:
+    """Tekshiruvda xabar Telegram'da hali mavjudligi ko'rinsa — o'chirish belgisini bekor qiladi.
+
+    Qaytaradi: belgisi bekor qilingan ``message_id`` lar.
+    """
+    ids = sorted(set(message_ids))
+    now = utcnow()
+    revoked: list[int] = []
+    for chunk in _chunks(ids):
+        rows = await session.scalars(
+            select(Message).where(
+                Message.chat_id == chat_id,
+                Message.message_id.in_(chunk),
+                Message.deletion_status.is_not(None),
+            )
+        )
+        for message in rows:
+            _revoke_deletion(session, message, now, source=source)
+            message.updated_at = now
+            revoked.append(message.message_id)
+    await session.flush()
+    return sorted(revoked)
+
+
+def _revoke_deletion(
+    session: AsyncSession, message: Message, now: datetime, *, source: DeletionSource = DeletionSource.RESYNC
+) -> None:
     session.add(
         DeletionEvent(
             detected_at=now,
             chat_id=message.chat_id,
             message_id=message.message_id,
             resolution=DeletionResolution.REVOKED,
-            source=DeletionSource.RESYNC,
+            source=source,
             message_pk=message.id,
             resolved_chat_id=message.chat_id,
             note=f"avvalgi holat: {message.deletion_status}",

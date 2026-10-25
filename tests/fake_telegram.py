@@ -38,6 +38,8 @@ class FakeTelegram:
         self.authorized = True
         self.connected = False
         self.calls: list[tuple[str, int, dict[str, Any]]] = []
+        self.handlers: list[tuple[Any, Any]] = []
+        self.on_connect: list[tuple[type, Any]] = []  # ulanishda yuboriladigan hodisalar (catch_up)
         self._errors: dict[str, list[tuple[int, BaseException]]] = defaultdict(list)
         self._counts: dict[str, int] = defaultdict(int)
 
@@ -73,7 +75,30 @@ class FakeTelegram:
         return self.connected
 
     async def connect(self) -> None:
+        self.calls.append(("connect", 0, {}))
         self.connected = True
+        for builder_type, event in self.on_connect:
+            await self.emit(builder_type, event)
+        self.on_connect = []
+
+    # ------------------------------------------------------------- hodisalar
+
+    def add_event_handler(self, callback: Any, event: Any = None) -> None:
+        self.calls.append(("add_event_handler", 0, {"event": type(event).__name__}))
+        self.handlers.append((callback, event))
+
+    def remove_event_handler(self, callback: Any, event: Any = None) -> int:
+        before = len(self.handlers)
+        self.handlers = [
+            (cb, ev) for cb, ev in self.handlers if not (cb == callback and (event is None or ev is event))
+        ]
+        return before - len(self.handlers)
+
+    async def emit(self, builder_type: type, event: Any) -> None:
+        """Telethon kabi: faqat shu turdagi builder bilan ro'yxatdan o'tgan handler'lar chaqiriladi."""
+        for callback, builder in list(self.handlers):
+            if type(builder) is builder_type:
+                await callback(event)
 
     async def disconnect(self) -> None:
         self.connected = False

@@ -112,6 +112,16 @@ def format_summary(summary: ImportSummary, heartbeat: ComponentHeartbeat | None,
         error = (heartbeat.details or {}).get("error")
         if error:
             lines.append(f"  Sabab: {error}")
+        realtime = (heartbeat.details or {}).get("realtime")
+        if realtime:
+            counts = realtime.get("events") or {}
+            deleted = sum(v for k, v in counts.items() if k.startswith("deleted_"))
+            last = realtime.get("last_event_at")
+            last_text = f", oxirgi hodisa {last[:19].replace('T', ' ')} UTC" if last else ""
+            lines.append(
+                f"Real vaqt: yangi {counts.get('created', 0)}, tahrir {counts.get('edited', 0)}, "
+                f"o'chirish {deleted}, navbatda {realtime.get('queue', 0)}{last_text}"
+            )
     modes = ", ".join(f"{k}: {v}" for k, v in sorted(summary.chats_by_mode.items())) or "-"
     statuses = ", ".join(f"{k}: {v}" for k, v in sorted(summary.backfill_by_status.items())) or "-"
     lines.append(f"Chatlar (rejim): {modes}")

@@ -56,6 +56,8 @@ class BaseAppSettings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # "HISTORY_MAX_AGE_DAYS=" kabi bo'sh qator — berilmagan deb hisoblanadi (sukut qiymati)
+        env_ignore_empty=True,
     )
 
     data_dir: Path = Path("data")
@@ -128,8 +130,10 @@ class ArchiverSettings(BaseAppSettings):
     history_max_age_days: int | None = Field(None, ge=1)
     flood_sleep_threshold_s: int = Field(60, ge=0, le=86_400)
     max_flood_wait_s: int = Field(3600, ge=60)
-    # Dialoglar ro'yxati va yangi xabarlarni tekshirish oralig'i
+    # Dialoglar ro'yxati va yangi xabarlarni tekshirish oralig'i (real vaqt bilan birga — solishtirish)
     sync_interval_s: int = Field(600, ge=60, le=86_400)
+    # Real vaqt hodisalari: yangi xabar, tahrir, o'chirish
+    realtime_enabled: bool = True
 
     # Kanallar: faqat ma'lumoti va oxirgi N ta post (0 — to'liq tarix).
     # Izohlar (postlarga reply'lar) har biri saqlanadi.

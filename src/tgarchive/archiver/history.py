@@ -264,7 +264,7 @@ class HistoryImporter:
                     state.backfill_status = SyncStatus.DONE
                     state.finished_at = self._clock()
             self.progress["cursor"] = cursor
-            await self._resolve_reply_targets(kept)
+            await self.resolve_reply_targets(kept)
             if reached_cutoff:
                 log.info("backfill_done", chat_id=job.chat_id, reason="max_age")
                 return False
@@ -314,11 +314,13 @@ class HistoryImporter:
         async with self.db.read() as session:
             high_water = (await session.get(ChatSyncState, job.chat_id)).high_water_id or 0
         page_size = self.settings.history_page_size
+        reached_end = False
         while not self.stop.is_set():
             observed = self._clock()
             # reverse=True: eskidan yangiga, min_id — pastki chegara (shu ID kirmaydi)
             page = await self.client.get_messages(entity, limit=page_size, min_id=high_water, reverse=True)
             if not page:
+                reached_end = True
                 break
             records = self._convert(page)
             high_water = max(m.id for m in page)
@@ -328,12 +330,17 @@ class HistoryImporter:
                 state.high_water_id = max(state.high_water_id or 0, high_water)
                 state.last_refresh_at = self._clock()
                 self._mark_success(state)
-            await self._resolve_reply_targets(records)
+            await self.resolve_reply_targets(records)
             if len(page) < page_size:
+                reached_end = True
                 break
             await self._sleep(self.settings.history_page_delay_s)
         async with self.db.write() as session:
             state = await session.get(ChatSyncState, job.chat_id)
+            if reached_end and state.remote_top_id is not None:
+                # Dialoglarda ko'rilgan eng yangi xabar o'chirilgan bo'lsa ham, undan pastdagi
+                # hamma narsa olindi — aks holda shu chat har sinxronda qayta tekshirilaverardi.
+                state.high_water_id = max(state.high_water_id or 0, state.remote_top_id)
             state.last_refresh_at = self._clock()
             self._mark_success(state)
 
@@ -371,7 +378,7 @@ class HistoryImporter:
             state.last_refresh_at = self._clock()
             self._mark_success(state)
         log.info("window_refreshed", chat_id=job.chat_id, posts=len(posts), pruned=len(pruned), deleted=len(deleted))
-        await self._resolve_reply_targets(records)
+        await self.resolve_reply_targets(records)
         if self.settings.channel_save_comments:
             await self._sync_comments(job, entity, posts)
 
@@ -446,11 +453,11 @@ class HistoryImporter:
         if batch:
             saved += await self._save_with_chats(batch, MessageSource.HISTORY)
         # Butun mavzu saqlangandan keyin: izoh boshqa izohga javob bo'lsa, u allaqachon arxivda.
-        await self._resolve_reply_targets(saved)
+        await self.resolve_reply_targets(saved)
 
     # --------------------------------------------------------- reply targets
 
-    async def _resolve_reply_targets(self, records: Iterable[MessageRecord], depth: int = 0) -> None:
+    async def resolve_reply_targets(self, records: Iterable[MessageRecord], depth: int = 0) -> None:
         """Reply qilingan xabar arxivda bo'lmasa — uni ham oladi.
 
         To'liq arxivlanadigan chat ichidagi reply'lar o'tkazib yuboriladi: ularni backfill
@@ -493,7 +500,7 @@ class HistoryImporter:
                 continue
             found = [m for m in messages if m is not None and not isinstance(m, types.MessageEmpty)]
             fetched += await self._save_with_chats(found, MessageSource.HISTORY)
-        await self._resolve_reply_targets(fetched, depth + 1)
+        await self.resolve_reply_targets(fetched, depth + 1)
 
     # --------------------------------------------------------------- helpers
 

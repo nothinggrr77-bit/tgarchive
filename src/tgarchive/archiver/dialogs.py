@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from tgarchive.archiver.convert import chat_info_from_entity
 from tgarchive.config import ArchiverSettings
@@ -94,30 +95,44 @@ async def sync_dialogs(client: Any, db: Database, settings: ArchiverSettings) ->
     planned: list[PlannedDialog] = []
     async with db.write() as session:
         for dialog in dialogs:
-            row = await upsert_chat(session, dialog.chat)
-            item = _plan(dialog, settings, row)
-            row.archive_mode = item.policy.mode
-            planned.append(item)
-            state = await session.get(ChatSyncState, dialog.chat.chat_id)
-            if item.policy.archived:
-                if state is None:
-                    state = ChatSyncState(
-                        chat_id=dialog.chat.chat_id,
-                        backfill_status=SyncStatus.PENDING,
-                        high_water_id=dialog.top_message_id,
-                        backfill_imported=0,
-                        attempts=0,
-                    )
-                    session.add(state)
-                elif state.backfill_status is SyncStatus.DISABLED:
-                    state.backfill_status = SyncStatus.PENDING
-                if dialog.top_message_id is not None:
-                    state.remote_top_id = dialog.top_message_id
-            elif state is not None and state.backfill_status is not SyncStatus.DISABLED:
-                state.backfill_status = SyncStatus.DISABLED
+            policy = await register_chat(session, dialog.chat, settings, top_message_id=dialog.top_message_id)
+            planned.append(PlannedDialog(dialog, policy))
     counts = Counter(p.policy.mode.value for p in planned)
     log.info("dialogs_synced", total=len(planned), **counts)
     return planned
+
+
+async def register_chat(
+    session: AsyncSession, chat: ChatInfo, settings: ArchiverSettings, *, top_message_id: int | None
+) -> ChatPolicy:
+    """Chatni yozadi, siyosatni qo'llaydi va checkpoint holatini yangilaydi (``sync_dialogs`` qoidalari).
+
+    Real vaqtda yangi chat paydo bo'lganda ham shu funksiya ishlatiladi.
+    """
+    row = await upsert_chat(session, chat)
+    policy = decide_policy(
+        chat, settings, archive_override=row.archive_override, media_override=row.media_override
+    )
+    row.archive_mode = policy.mode
+    state = await session.get(ChatSyncState, chat.chat_id)
+    if policy.archived:
+        if state is None:
+            state = ChatSyncState(
+                chat_id=chat.chat_id,
+                backfill_status=SyncStatus.PENDING,
+                high_water_id=top_message_id,
+                backfill_imported=0,
+                attempts=0,
+            )
+            session.add(state)
+        elif state.backfill_status is SyncStatus.DISABLED:
+            state.backfill_status = SyncStatus.PENDING
+        if top_message_id is not None:
+            state.remote_top_id = top_message_id
+    elif state is not None and state.backfill_status is not SyncStatus.DISABLED:
+        state.backfill_status = SyncStatus.DISABLED
+    await session.flush()
+    return policy
 
 
 def _plan(dialog: DialogInfo, settings: ArchiverSettings, row: Chat | None) -> PlannedDialog:

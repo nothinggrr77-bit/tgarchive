@@ -478,3 +478,21 @@ async def test_history_disabled_archives_only_new_messages_and_channel_window(db
     await importer.run_until_idle()
     assert await ids(db, chat) == [11, 12]
     assert (await state(db, chat)).backfill_status is SyncStatus.PENDING
+
+
+async def test_deleted_top_message_does_not_trigger_forward_forever(db: Database, tmp_path: Path) -> None:
+    tg = FakeTelegram()
+    chat = tg.add_chat(user(), *private(5))
+    cfg = settings(tmp_path)
+    await sync_dialogs(tg, db, cfg)
+    importer = make_importer(tg, db, cfg)
+    await importer.run_until_idle()
+
+    tg.add(chat, *private(7, start=6))
+    await sync_dialogs(tg, db, cfg)  # dialoglarda eng yangi = 7
+    del tg.history[chat][6], tg.history[chat][7]  # forward'dan oldin o'chirildi
+    assert [job.kind for job in await importer.plan()] == [JobKind.FORWARD]
+    await importer.run_until_idle()
+
+    assert (await state(db, chat)).high_water_id == 7
+    assert await importer.plan() == []

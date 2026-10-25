@@ -27,6 +27,7 @@ from telethon import errors
 from tgarchive.archiver.client import create_client
 from tgarchive.archiver.dialogs import sync_dialogs
 from tgarchive.archiver.history import FATAL_ERRORS, TRANSIENT_ERRORS, HistoryImporter, Sleep
+from tgarchive.archiver.realtime import RealtimeArchiver, stop_consumer
 from tgarchive.config import ArchiverSettings
 from tgarchive.db.engine import Database
 from tgarchive.db.meta import AccountMismatchError, bind_account
@@ -57,7 +58,9 @@ class ArchiverService:
         clock: Callable[[], datetime] = utcnow,
     ) -> None:
         self.settings = settings
-        self.client_factory = client_factory or (lambda s: create_client(s))
+        self.client_factory = client_factory or (
+            lambda s: create_client(s, receive_updates=s.realtime_enabled)
+        )
         self.stop = stop or asyncio.Event()
         self._sleep = sleep or self._interruptible_sleep
         self._clock = clock
@@ -67,30 +70,45 @@ class ArchiverService:
         self.account_id: int | None = None
         self.last_sync_at: datetime | None = None
         self.importer: HistoryImporter | None = None
+        self.realtime: RealtimeArchiver | None = None
 
     async def run(self, *, once: bool = False) -> int:
         db = Database(self.settings.database_url, busy_timeout_ms=self.settings.db_busy_timeout_ms)
         client = None
         heartbeat: asyncio.Task[None] | None = None
+        consumer: asyncio.Task[None] | None = None
         try:
             await self._beat(db)
             heartbeat = asyncio.create_task(self._heartbeat_loop(db))
             if not self.settings.session_path.exists():
                 return await self._auth_failed(db, "session yo'q: avval tgarchive login", once)
             client = self.client_factory(self.settings)
+            if self.settings.realtime_enabled:
+                # connect'dan OLDIN: ulanishda catch_up olib kelgan hodisalar ham navbatga tushsin
+                self.realtime = RealtimeArchiver(client, db, self.settings, clock=self._clock)
+                await self.realtime.load_modes()
+                self.realtime.register()
             try:
                 me = await self._connect(client)
                 async with db.write() as session:
                     await bind_account(session, me.id)
             except (_AuthProblem, AccountMismatchError, *FATAL_ERRORS) as exc:
-                return await self._auth_failed(db, str(exc) or type(exc).__name__, once)
+                return await self._auth_failed(db, str(exc) or type(exc).__name__, once, client=client)
             self.account_id = me.id
-            log.info("archiver_started", account_id=me.id, once=once)
+            log.info("archiver_started", account_id=me.id, once=once, realtime=self.realtime is not None)
             self.importer = HistoryImporter(
                 client, db, self.settings, self_id=me.id, stop=self.stop, sleep=self._sleep, clock=self._clock
             )
+            if self.realtime is not None:
+                self.realtime.importer = self.importer
+                consumer = asyncio.create_task(self.realtime.run())
             return await self._loop(client, db, once=once)
         finally:
+            if self.realtime is not None:
+                self.realtime.unregister()
+                if consumer is not None and not consumer.done():
+                    await self.realtime.drain()
+                await stop_consumer(consumer)
             if heartbeat is not None:
                 heartbeat.cancel()
                 with suppress(asyncio.CancelledError):
@@ -117,14 +135,16 @@ class ArchiverService:
             try:
                 if next_sync is None or time.monotonic() >= next_sync:
                     self.state = "syncing"
-                    await sync_dialogs(client, db, self.settings)
+                    planned = await sync_dialogs(client, db, self.settings)
+                    if self.realtime is not None:
+                        self.realtime.update_modes(planned)
                     self.last_sync_at = self._clock()
                     next_sync = time.monotonic() + self.settings.sync_interval_s
                 self.state = "importing"
                 more = await self.importer.run_tick()
                 failures = 0
             except FATAL_ERRORS as exc:
-                return await self._auth_failed(db, f"session yaroqsiz: {type(exc).__name__}", once)
+                return await self._auth_failed(db, f"session yaroqsiz: {type(exc).__name__}", once, client=client)
             except TRANSIENT_ERRORS as exc:
                 delay = RECONNECT_BACKOFF_S[min(failures, len(RECONNECT_BACKOFF_S) - 1)]
                 failures += 1
@@ -149,10 +169,16 @@ class ArchiverService:
                 await self._sleep(max(0.0, (next_sync or 0) - time.monotonic()))
         return EXIT_OK
 
-    async def _auth_failed(self, db: Database, reason: str, once: bool) -> int:
+    async def _auth_failed(self, db: Database, reason: str, once: bool, *, client: Any = None) -> int:
         self.state = "auth_error"
         self.error = reason
         log.error("archiver_auth_error", reason=reason)
+        # Yaroqsiz session bilan ulanib turmaymiz va hodisa qabul qilmaymiz
+        if self.realtime is not None:
+            self.realtime.unregister()
+        if client is not None:
+            with suppress(Exception):
+                await client.disconnect()
         await self._beat(db)
         if once:
             return EXIT_AUTH
@@ -168,6 +194,7 @@ class ArchiverService:
             "job": dict(self.importer.progress) if self.importer else {},
             "last_sync_at": self.last_sync_at.isoformat() if self.last_sync_at else None,
             "error": self.error,
+            "realtime": self.realtime.details() if self.realtime else None,
         }
 
     async def _beat(self, db: Database) -> None:
