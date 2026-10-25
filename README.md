@@ -6,9 +6,9 @@ akkauntingiz orqali admin bot bilan boshqariladigan, Linux VPS'da 24/7 ishlaydig
 - **archiver** — asosiy akkaunt bilan MTProto (Telethon) orqali ishlaydi: tarix importi, real vaqt, tahrirlar, o‘chirishlar, media.
 - **bot** — aiogram 3 admin bot; faqat `OWNER_ID` uchun. Bot jarayonida asosiy akkaunt session'i **yo‘q**.
 
-> **Holat:** 1–8-bosqichlar tayyor va archiver serverda doimiy ishlay oladi (Docker Compose).
-> Tarix importi, real vaqt hodisalari, tahrirlar tarixi, o‘chirilgan xabarlar va media fayllar
-> (50 MB gacha; kattalari ro‘yxatda ko‘rinadi) ishlaydi. Keyingisi — admin bot (9-bosqich). Batafsil: [docs/00-roadmap.md](docs/00-roadmap.md).
+> **Holat:** 1–9-bosqichlar tayyor: archiver (tarix, real vaqt, tahrirlar, o‘chirishlar, media 50 MB gacha)
+> va admin bot (qidiruv, chatlar, o‘chirilganlar, media, katta fayllar, statistika, holat) serverda
+> Docker Compose bilan doimiy ishlaydi. Keyingisi — eksport va shifrlangan zaxira (10-bosqich). Batafsil: [docs/00-roadmap.md](docs/00-roadmap.md).
 >
 > Arxivlash siyosati: shaxsiy chat va guruhlar — to‘liq va doimiy; kanallar — ma’lumoti va
 > oxirgi 20 ta post; postlarga izohlar (reply'lar) — har biri saqlanadi.
@@ -19,10 +19,10 @@ To‘liq yo‘riqnoma: **[docs/deploy.md](docs/deploy.md)** (GitHub → server �
 
 ```bash
 git clone git@github-tgarchive:<LOGIN>/tgarchive.git ~/tgarchive && cd ~/tgarchive
-cp .env.example .env && chmod 600 .env && nano .env      # TG_API_ID, TG_API_HASH
+cp .env.example .env && chmod 600 .env && nano .env      # TG_API_ID, TG_API_HASH, BOT_TOKEN, OWNER_ID
 docker compose build
 docker compose run --rm archiver login                   # bir marta
-docker compose up -d                                     # doimiy, server qayta yoqilganda ham
+docker compose up -d                                     # archiver + bot, server qayta yoqilganda ham
 docker compose exec archiver python -m tgarchive status
 ```
 
@@ -39,6 +39,7 @@ docker compose exec archiver python -m tgarchive status
 | [06-history.md](docs/06-history.md) | 6-bosqich: tarix importi, checkpoint, kanal oynasi, izohlar, xizmat |
 | [07-realtime.md](docs/07-realtime.md) | 7-bosqich: real vaqt, tahrirlar, o‘chirishlar va ularning kafolat chegaralari |
 | [08-media.md](docs/08-media.md) | 8-bosqich: media arxivi, 50 MB chegara, katta fayllar, disk nazorati |
+| [09-bot.md](docs/09-bot.md) | 9-bosqich: admin bot — o‘rnatish, OWNER_ID, buyruqlar, qidiruv sintaksisi, xavfsizlik |
 
 ## Lokal o‘rnatish (Docker'siz)
 
@@ -77,7 +78,8 @@ tgarchive whoami                  # session qaysi akkauntga tegishli
 tgarchive dialogs [--save]        # dialoglar va har biriga qo'llanadigan siyosat
 tgarchive logout                  # session'ni Telegram'da tugatish va faylini o'chirish
 
-tgarchive run                     # doimiy xizmat (Docker'da avtomatik)
+tgarchive run                     # archiver xizmati (Docker'da avtomatik)
+tgarchive bot                     # admin bot (Docker'da avtomatik)
 tgarchive import                  # tarixni bir marta oxirigacha import qilish
 tgarchive status                  # holat va import statistikasi
 tgarchive health                  # healthcheck: 0 — sog'lom, 1 — nosoz

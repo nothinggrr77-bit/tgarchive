@@ -1,7 +1,7 @@
 # Deploy: GitHub → server → doimiy ishlash (Docker Compose)
 
 Bu yo‘riqnoma archiver'ni Linux VPS'da 24/7 ishga tushiradi. Server qayta yoqilganda ham u
-avtomatik ishga tushadi. Admin bot 9-bosqichda shu `docker-compose.yml` ga qo‘shiladi.
+avtomatik ishga tushadi. Ikkita xizmat ishlaydi: **archiver** (asosiy akkaunt) va **bot** (admin bot, [09-bot.md](09-bot.md)).
 
 **Kerak:** Ubuntu 22.04/24.04 yoki Debian 12/13 VPS (1 vCPU, 1 GB RAM yetadi), SSH kirish,
 GitHub akkaunt, my.telegram.org dan `api_id` / `api_hash`.
@@ -90,7 +90,9 @@ chmod 600 .env
 nano .env
 ```
 
-Hozircha faqat ikkitasi majburiy: `TG_API_ID`, `TG_API_HASH`. `BOT_TOKEN` va `OWNER_ID` 9-bosqichda kerak bo‘ladi.
+Majburiy: `TG_API_ID`, `TG_API_HASH` (archiver), `BOT_TOKEN`, `OWNER_ID` (bot — qanday olish: [09-bot.md](09-bot.md)).
+Bot sozlanmagan bo‘lsa, archiver baribir ishlaydi; bot konteyneri esa xato bilan qayta-qayta ishga tushadi —
+`docker compose logs bot` da sababi ko‘rinadi.
 Yo‘llar (`DATA_DIR`, `DB_PATH`, …) Docker'da `docker-compose.yml` tomonidan belgilanadi — ularni o‘zgartirmang.
 
 ---
@@ -245,6 +247,5 @@ docker compose up -d
 
 - Real vaqt ishlaydi (yangi xabarlar, tahrirlar, o‘chirishlar). Archiver o‘chiq bo‘lgan paytdagi o‘chirishlar faqat Telegram qayta ulanishda bergan bo‘lsa qayd etiladi — [07-realtime.md](07-realtime.md).
 - Media: 50 MB gacha fayllar yuklanadi; kattalari ro‘yxatda ko‘rinadi ([08-media.md](08-media.md)). Disk to‘lib qolmasligi uchun `MEDIA_MIN_FREE_GB` (5 GB) himoyasi bor.
-- Admin bot — 9-bosqich.
 - Avtomatik shifrlangan zaxira — 10-bosqich.
 - Docker build va compose fayl bu yerda (Windows'da Docker yo‘q) haqiqiy Docker bilan **ishga tushirilmagan**: image muhiti taqlid qilinib tekshirilgan (lock'dan o‘rnatish, Linux wheel'lari, `PYTHONPATH` rejimi, compose sintaksisi). Serverdagi birinchi `docker compose build` — haqiqiy tekshiruv.

@@ -24,18 +24,15 @@ Fayl yo'li faqat raqamlardan va tozalangan kengaytmadan yasaladi:
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
-import mimetypes
 import os
-import re
 import shutil
 from collections import Counter
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any, NamedTuple
 
 from sqlalchemy import select, update
@@ -53,6 +50,7 @@ from tgarchive.db.store import ChatInfo
 from tgarchive.db.types import utcnow
 from tgarchive.fs import ensure_private_dir
 from tgarchive.logging_setup import get_logger
+from tgarchive.mediafiles import hash_file, media_extension, media_relpath, resolve_media_path
 from tgarchive.policy import media_decision
 
 log = get_logger(__name__)
@@ -64,15 +62,9 @@ RETRY_S = (60, 300, 1800, 7200, 43200)
 TRANSIENT_RETRY_S = 60
 VERIFY_CHUNK = 500
 TRASH_CHUNK = 200
-HASH_CHUNK = 1 << 20
 TMP_DIR = ".tmp"
 POLICY_META_KEY = "media_policy"
 NOTE_LIMIT = 255
-
-_EXT_BY_TYPE = {MediaType.PHOTO: ".jpg", MediaType.VOICE: ".ogg", MediaType.VIDEO_NOTE: ".mp4"}
-_EXT_BY_MIME = {"audio/ogg": ".ogg", "application/x-tgsticker": ".tgs"}
-_EXT_RE = re.compile(r"^\.[a-z0-9]{1,10}$")
-_FALLBACK_EXT = ".bin"
 
 
 class Decision(NamedTuple):
@@ -123,47 +115,6 @@ def policy_fingerprint(settings: ArchiverSettings) -> str:
         },
         sort_keys=True,
     )
-
-
-# ------------------------------------------------------------------- yo'llar
-
-
-def media_extension(media: Media) -> str:
-    if media.media_type in _EXT_BY_TYPE:
-        return _EXT_BY_TYPE[media.media_type]
-    if media.file_name:
-        # Faqat kengaytma olinadi — nomdagi "../" kabi qismlar yo'lga hech qachon tushmaydi
-        suffix = PurePosixPath(media.file_name.replace("\\", "/")).suffix.lower()
-        if _EXT_RE.match(suffix):
-            return suffix
-    if media.mime_type:
-        ext = _EXT_BY_MIME.get(media.mime_type) or mimetypes.guess_extension(media.mime_type) or ""
-        if _EXT_RE.match(ext):
-            return ext
-    return _FALLBACK_EXT
-
-
-def media_relpath(media: Media, message: Message) -> str:
-    return f"{message.chat_id}/{message.date:%Y-%m}/{message.message_id}-{media.id}{media_extension(media)}"
-
-
-def resolve_media_path(root: Path, relpath: str) -> Path:
-    """``MEDIA_DIR`` ichidagi mutlaq yo'l. Tashqariga chiqadigan yo'l — xato."""
-    base = root.resolve()
-    path = (base / relpath).resolve()
-    if not path.is_relative_to(base) or path == base:
-        raise ValueError(f"media yo'li MEDIA_DIR dan tashqarida: {relpath!r}")
-    return path
-
-
-def hash_file(path: Path) -> tuple[int, str]:
-    digest = hashlib.sha256()
-    size = 0
-    with open(path, "rb") as handle:
-        while chunk := handle.read(HASH_CHUNK):
-            digest.update(chunk)
-            size += len(chunk)
-    return size, digest.hexdigest()
 
 
 @dataclass(frozen=True, slots=True)

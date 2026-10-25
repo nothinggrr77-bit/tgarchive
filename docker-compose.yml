@@ -10,6 +10,14 @@
 
 name: tgarchive
 
+x-paths: &paths
+  DATA_DIR: /data
+  DB_PATH: /data/db/archive.sqlite3
+  MEDIA_DIR: /data/media
+  EXPORT_DIR: /data/exports
+  BACKUP_DIR: /data/backups
+  LOG_FORMAT: json
+
 x-hardening: &hardening
   read_only: true
   tmpfs:
@@ -34,15 +42,12 @@ services:
     env_file: .env
     # Konteyner ichidagi yo'llar .env dagi qiymatlardan ustun turadi
     environment:
-      DATA_DIR: /data
-      DB_PATH: /data/db/archive.sqlite3
-      MEDIA_DIR: /data/media
-      EXPORT_DIR: /data/exports
-      BACKUP_DIR: /data/backups
-      LOG_FORMAT: json
+      <<: *paths
+      # Archiver'ga bot tokeni kerak emas
+      BOT_TOKEN: ""
     volumes:
       - db:/data/db
-      - session:/data/session   # faqat archiver ulaydi; bot (9-bosqich) bu volume'ni olmaydi
+      - session:/data/session   # faqat archiver ulaydi; bot bu volume'ni olmaydi
       - media:/data/media
       - exports:/data/exports
       - backups:/data/backups
@@ -51,6 +56,34 @@ services:
     mem_limit: 512m
     healthcheck:
       test: ["CMD", "python", "-m", "tgarchive", "health", "--component", "archiver", "--max-age", "180"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+
+  # Admin bot: ikkinchi akkaunt (OWNER_ID) orqali boshqaruv.
+  # Asosiy akkaunt session'i va TG_API_HASH bu konteynerga BERILMAYDI.
+  bot:
+    <<: *hardening
+    build: .
+    image: tgarchive:local
+    command: ["bot"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *paths
+      TG_API_ID: ""
+      TG_API_HASH: ""
+    volumes:
+      - db:/data/db              # o'qish + audit va "yuklab olish" so'rovlari
+      - media:/data/media:ro     # fayllarni faqat o'qiydi
+      - exports:/data/exports
+    depends_on:
+      - archiver                 # bazani archiver migratsiya qiladi; bot sxemani kutadi
+    stop_grace_period: 15s
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "python", "-m", "tgarchive", "health", "--component", "bot", "--max-age", "180"]
       interval: 60s
       timeout: 15s
       retries: 3

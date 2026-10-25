@@ -90,6 +90,7 @@ def format_media_summary(summary: MediaSummary, limit_mb: int | None = None) -> 
 @dataclass(frozen=True, slots=True)
 class LargeFile:
     media_id: int
+    message_pk: int
     chat_id: int
     chat_title: str | None
     message_id: int
@@ -103,7 +104,7 @@ class LargeFile:
 async def list_large_files(session: AsyncSession, *, limit: int = 20, offset: int = 0) -> list[LargeFile]:
     """Hajm chegarasidan katta bo'lgani uchun yuklanmagan fayllar, eng yangisi birinchi."""
     rows = await session.execute(
-        select(Media, Message.chat_id, Message.message_id, Message.date, Chat.title)
+        select(Media, Message.id, Message.chat_id, Message.message_id, Message.date, Chat.title)
         .join(Message, Message.id == Media.message_pk)
         .join(Chat, Chat.chat_id == Message.chat_id)
         .where(
@@ -118,6 +119,7 @@ async def list_large_files(session: AsyncSession, *, limit: int = 20, offset: in
     return [
         LargeFile(
             media_id=media.id,
+            message_pk=message_pk,
             chat_id=chat_id,
             chat_title=title,
             message_id=message_id,
@@ -127,7 +129,7 @@ async def list_large_files(session: AsyncSession, *, limit: int = 20, offset: in
             mime_type=media.mime_type,
             size=media.expected_size,
         )
-        for media, chat_id, message_id, date, title in rows
+        for media, message_pk, chat_id, message_id, date, title in rows
     ]
 
 

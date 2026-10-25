@@ -30,7 +30,8 @@ from tgarchive.exitcodes import EXIT_AUTH, EXIT_CONFIG, EXIT_OK, EXIT_RUNTIME
 from tgarchive.fs import ensure_private_dir, permission_warnings, set_private_umask
 from tgarchive.logging_setup import setup_logging
 
-HEALTHY_STATES = frozenset({"starting", "syncing", "importing", "idle", "reconnecting"})
+# archiver holatlari + bot ("running")
+HEALTHY_STATES = frozenset({"starting", "syncing", "importing", "idle", "reconnecting", "running"})
 
 _INFO_TABLES = ("chats", "messages", "message_versions", "media", "deletion_events", "audit_log")
 _HIDDEN = "o'rnatilgan (yashirin)"
@@ -345,6 +346,21 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return asyncio.run(_run_service(_service_settings(args), once=False))
 
 
+def _cmd_bot(args: argparse.Namespace) -> int:
+    from aiogram.exceptions import TelegramUnauthorizedError
+
+    from tgarchive.bot.app import run_bot
+
+    settings = load_settings(BotSettings, args.env_file)
+    setup_logging(settings.log_level, settings.log_format, secrets=settings.secret_values())
+    try:
+        asyncio.run(run_bot(settings))
+    except TelegramUnauthorizedError:
+        print("BOT_TOKEN Telegram tomonidan rad etildi — @BotFather dagi tokenni tekshiring.", file=sys.stderr)
+        return EXIT_CONFIG
+    return EXIT_OK
+
+
 def _cmd_import(args: argparse.Namespace) -> int:
     return asyncio.run(_run_service(_service_settings(args), once=True))
 
@@ -506,6 +522,7 @@ def _build_parser() -> argparse.ArgumentParser:
     logout.set_defaults(handler=_cmd_logout)
 
     sub.add_parser("run", help="archiver xizmati (doimiy, 24/7)").set_defaults(handler=_cmd_run)
+    sub.add_parser("bot", help="admin bot (doimiy)").set_defaults(handler=_cmd_bot)
     sub.add_parser("import", help="tarixni bir marta import qilib chiqish").set_defaults(handler=_cmd_import)
     sub.add_parser("status", help="import statistikasi va archiver holati").set_defaults(handler=_cmd_status)
 
