@@ -43,6 +43,13 @@ class OpenChat(CallbackData, prefix="c"):
     chat_id: int
 
 
+class Conversation(CallbackData, prefix="r"):
+    """Chatni Telegram'dagidek o'qish: xabarlar oynasi (offset — oynaning boshlanishi)."""
+
+    chat_id: int
+    offset: int = 0
+
+
 class ChatMessages(CallbackData, prefix="cm"):
     chat_id: int
     deleted: bool = False

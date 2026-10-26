@@ -65,15 +65,28 @@ Ikkinchi akkauntdan botga **`/start`** yuboring — menyu chiqadi va buyruqlar r
 | `/start` | Menyu (tugmalar bilan) |
 | `/search matn [filtrlar]` | Qidiruv. **Oddiy matn yuborish ham qidiruv** |
 | `/recent` | So‘nggi xabarlar (barcha chatlar) |
-| `/chats` | Arxivdagi chatlar: xabarlar soni, oxirgi xabar, ID; chatni bosing → tafsilot, so‘nggi va o‘chirilganlar |
+| `/chats` | Arxivdagi chatlar; chatni bosing → **suhbatni Telegram'dagidek o‘qiysiz** (pastda) |
 | `/deleted` | O‘chirilganligi qayd etilgan xabarlar (o‘chirilish vaqti bo‘yicha) |
 | `/media` | Media statistikasi, turlar bo‘yicha ro‘yxat, **📦 Katta fayllar**; `/media nom` — fayl nomi bo‘yicha |
 | `/stats` | Arxiv statistikasi, eng faol chatlar, baza hajmi |
 | `/status` | Archiver holati (real vaqt, import, media worker), disk, bot ishlash vaqti |
 | `/help` | Buyruqlar va qidiruv sintaksisi |
-| `/export` | 10-bosqichda |
+| `/export` | Eksport (zip: HTML yoki JSON) — pastda |
+| `/audit` | Audit jurnali va o‘chirish hodisalari |
 
 Natijalar sahifalarga bo‘lingan (`BOT_PAGE_SIZE`, sukut 10): raqamli tugma → xabarni ochish, ◀️ ▶️ — sahifalar.
+
+## Suhbatni o‘qish (Telegram'dagidek)
+
+`/chats` dan chatni tanlaganingizda suhbat ochiladi: eski xabarlar tepada, yangilari pastda —
+telefondagi chat kabi. Har bir kun **sana ajratkichi** bilan ajraladi, har xabarda yuboruvchi va
+soat ko‘rinadi, media «🖼 rasm», javob «↳ #123», tahrir «✏️», o‘chirilgan «🗑» belgilari bilan.
+
+- **⬆️ Eskiroq / ⬇️ Yangiroq** — oynani tarixga suradi yoki qaytaradi (bitta ekran o‘zgarib boradi).
+- **① ② …** — xabarni to‘liq ochadi: butun matn, media («📎 Faylni olish»), javob zanjiri, versiyalar.
+- **ℹ️ Chat haqida** — chat statistikasi; **🗑 O‘chirilgan** — shu chatning o‘chirilganlari; **💬 Chatlar** — ro‘yxatga qaytish.
+
+Uzun xabarlar oynada qisqartiriladi — to‘lig‘ini ① tugmasi orqali ko‘rasiz.
 
 ## Qidiruv sintaksisi
 

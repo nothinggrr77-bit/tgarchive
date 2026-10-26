@@ -59,6 +59,19 @@ def local_time(value: datetime | None, tz: ZoneInfo) -> str:
     return value.astimezone(tz).strftime("%Y-%m-%d %H:%M")
 
 
+def local_hm(value: datetime | None, tz: ZoneInfo) -> str:
+    """Faqat soat:daqiqa — suhbatni o'qishda sana alohida ajratkichda ko'rsatiladi."""
+    if value is None:
+        return "--:--"
+    return value.astimezone(tz).strftime("%H:%M")
+
+
+def local_day(value: datetime | None, tz: ZoneInfo) -> str:
+    if value is None:
+        return "-"
+    return value.astimezone(tz).strftime("%Y-%m-%d")
+
+
 def shorten(value: str | None, limit: int = SNIPPET) -> str:
     text = " ".join((value or "").split())
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"

@@ -25,7 +25,17 @@ from archive_fixture import LONG_TEXT, Archive, build_archive
 from fake_botapi import OWNER, STRANGER, TOKEN, RecordingSession, callback_update, text_update
 from tgarchive.bot import views as views_module
 from tgarchive.bot.app import BOT_COMPONENT, build_dispatcher, wait_for_schema
-from tgarchive.bot.callbacks import FetchFile, FullText, OpenMessage, SearchPage, SendFile
+from tgarchive.bot.callbacks import (
+    ChatMessages,
+    Conversation,
+    FetchFile,
+    FullText,
+    Menu,
+    OpenChat,
+    OpenMessage,
+    SearchPage,
+    SendFile,
+)
 from tgarchive.bot.format import MESSAGE_LIMIT, escape_within, split_text
 from tgarchive.bot.views import Views
 from tgarchive.cli import main
@@ -139,6 +149,49 @@ async def test_chats_and_chat_views(views: Views, archive: Archive) -> None:
     assert "Xabarlar: 8" in chat.text and "o'chirilgan: 1" in chat.text and "<code>/search chat:7 matn</code>" in chat.text
     deleted = await views.chat_messages(7, deleted=True)
     assert "o'chirilgan xabar" in deleted.text and "salom" not in deleted.text
+
+
+async def test_conversation_reads_like_a_chat(views: Views, archive: Archive) -> None:
+    view = await views.conversation(7)  # page_size=2 -> eng yangi 2 ta: #7 (uzun), #8 (chiquvchi)
+    assert view.text.startswith("💬 <b>Ali</b> · shaxsiy")
+    assert view.text.index("①") < view.text.index("②")  # eskisi tepada
+    assert "<b>Men</b>" in view.text and "men yozdim" in view.text  # chiquvchi xabar
+    assert "uzun…" in view.text  # uzun xabar qisqartirilgan (keyin keyingi xabar keladi)
+    assert "──────" in view.text  # sana ajratkichi
+    data = callbacks(view)
+    assert OpenMessage(pk=archive.pk[7]).pack() in data and OpenMessage(pk=archive.pk[8]).pack() in data
+    assert "⬆️ Eskiroq" in button_texts(view) and "⬇️ Yangiroq" not in button_texts(view)
+    assert OpenChat(chat_id=7).pack() in data
+    assert ChatMessages(chat_id=7, deleted=True).pack() in data and Menu(action="chats").pack() in data
+    assert all(len(d.encode()) <= CALLBACK_LIMIT for d in data)
+
+
+async def test_conversation_paging_shows_edited_and_deleted(views: Views, archive: Archive) -> None:
+    view = await views.conversation(7, offset=2)  # #5 (tahrirlangan) va #6 (o'chirilgan)
+    assert "yangi matn salom" in view.text and "✏️" in view.text  # joriy versiya + tahrir belgisi
+    assert "o'chirilgan xabar" in view.text and "🗑 o'chirilgan" in view.text
+    assert "⬆️ Eskiroq" in button_texts(view) and "⬇️ Yangiroq" in button_texts(view)
+
+
+async def test_conversation_past_the_end(views: Views, archive: Archive) -> None:
+    view = await views.conversation(7, offset=100)
+    assert "Boshqa eski xabar yo'q." in view.text
+    assert "⬇️ Yangiroq" in button_texts(view) and "⬆️ Eskiroq" not in button_texts(view)
+    assert not any(d.startswith("m:") for d in callbacks(view))  # xabar-tugmalari yo'q
+
+
+async def test_open_chat_from_list_enters_reading_mode(harness: BotHarness, archive: Archive) -> None:
+    await harness.feed(text_update("/chats"))
+    chat_list = harness.session.of(SendMessage)[-1]
+    enter = Conversation(chat_id=7).pack()
+    assert enter in [b.callback_data for row in chat_list.reply_markup.inline_keyboard for b in row]
+    await harness.feed(callback_update(enter))
+    [opened] = harness.session.of(EditMessageText)
+    assert "💬 <b>" in opened.text and "──────" in opened.text  # suhbat ekrani
+
+    older = next(b.callback_data for row in opened.reply_markup.inline_keyboard for b in row if b.text == "⬆️ Eskiroq")
+    await harness.feed(callback_update(older))
+    assert len(harness.session.of(EditMessageText)) == 2  # varaqlash o'sha xabarni almashtiradi
 
 
 async def test_media_views_and_fetch(views: Views, archive: Archive, db: Database) -> None:

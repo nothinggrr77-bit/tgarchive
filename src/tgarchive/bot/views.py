@@ -21,6 +21,7 @@ from sqlalchemy import select
 from tgarchive.bot.callbacks import (
     ChatMessages,
     ChatsPage,
+    Conversation,
     FetchFile,
     FullText,
     LargePage,
@@ -43,6 +44,8 @@ from tgarchive.bot.format import (
     escape_within,
     sender_label,
     fit,
+    local_day,
+    local_hm,
     local_time,
     media_label,
     shorten,
@@ -60,7 +63,7 @@ from tgarchive.db.media import (
     request_fetch,
 )
 from tgarchive.db.meta import LAST_BACKUP_KEY, get_json_meta
-from tgarchive.db.models import AuditLog, DeletionEvent, Media, Message
+from tgarchive.db.models import AuditLog, Chat, DeletionEvent, Media, Message
 from tgarchive.db.search import (
     MessageRow,
     SearchQuery,
@@ -95,10 +98,15 @@ BUTTONS_PER_ROW = 5
 QUERY_STORE_SIZE = 500
 Order = Literal["date", "deleted"]
 
+# Suhbatni o'qish ("telegramdek"): bitta oynada ko'pi bilan shuncha xabar, har biriga raqam-tugma.
+CONV_MAX = 10
+CONV_BODY = 260  # bitta xabar matni shu belgidan uzun bo'lsa qisqartiriladi (to'lig'i — tugma orqali)
+CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
+
 HELP = """<b>Buyruqlar</b>
 /search <i>matn</i> — qidirish (yoki shunchaki matn yuboring)
 /recent — so'nggi xabarlar
-/chats — arxivdagi chatlar
+/chats — arxivdagi chatlar (chatni bosib, suhbatni Telegram'dagidek o'qiysiz)
 /deleted — o'chirilganligi qayd etilgan xabarlar
 /media — media: turlar bo'yicha, katta fayllar; /media <i>nom</i> — fayl nomi bo'yicha
 /stats — arxiv statistikasi
@@ -332,7 +340,7 @@ class Views:
             media.skip_reason in REVIEWABLE_SKIPS or media.status is MediaStatus.FAILED
         ):
             builder.button(text="⬇️ Yuklab olish", callback_data=FetchFile(media_id=media.id).pack())
-        builder.button(text="💬 Chat", callback_data=OpenChat(chat_id=chat.chat_id).pack())
+        builder.button(text="📖 Chatni o'qish", callback_data=Conversation(chat_id=chat.chat_id).pack())
         builder.adjust(2)
         return View(text, builder.as_markup())
 
@@ -405,7 +413,7 @@ class Views:
                 f"({CHAT_TYPES.get(row.chat_type, row.chat_type)}, {MODES.get(row.archive_mode, '-')})\n"
                 f"    {row.message_count} xabar · oxirgi {local_time(row.last_date, self.tz)} · <code>{row.chat_id}</code>"
             )
-            numbered.append((index, OpenChat(chat_id=row.chat_id).pack()))
+            numbered.append((index, Conversation(chat_id=row.chat_id).pack()))
         nav = _nav(offset, self.page_size, page.has_next, lambda o: ChatsPage(offset=o).pack())
         return View(fit(lines), _keyboard(numbered, nav))
 
@@ -431,7 +439,7 @@ class Views:
                 lines.append(f"Oxirgi xato: {esc(shorten(st.last_error, 150))}")
         lines.append(f"\nShu chatda qidirish: <code>/search chat:{c.chat_id} matn</code>")
         builder = InlineKeyboardBuilder()
-        builder.button(text="🕘 So'nggi xabarlar", callback_data=ChatMessages(chat_id=chat_id).pack())
+        builder.button(text="📖 O'qish", callback_data=Conversation(chat_id=chat_id).pack())
         builder.button(text="🗑 O'chirilganlar", callback_data=ChatMessages(chat_id=chat_id, deleted=True).pack())
         builder.adjust(2)
         return View("\n".join(lines), builder.as_markup())
@@ -445,6 +453,87 @@ class Views:
                 SearchQuery(chat_id=chat_id, deleted=True), order="deleted", title=f"🗑 {name}: o'chirilganlar"
             )
         return await self.search(SearchQuery(chat_id=chat_id), title=f"🕘 {name}: so'nggi xabarlar")
+
+    # ------------------------------------------------------ suhbat (o'qish)
+
+    async def conversation(self, chat_id: int, offset: int = 0) -> View:
+        """Chatni Telegram'dagidek o'qish: eng yangi oynadan boshlab, eskisi tepada, yangisi pastda.
+
+        ``⬆️ Eskiroq`` oynani tarixga suradi (offset oshadi), ``⬇️ Yangiroq`` qaytaradi.
+        Har bir xabarga ① ② … tugmasi — to'liq matn, media va javob zanjirini ochadi.
+        """
+        size = min(self.page_size, CONV_MAX)
+        async with self.db.read() as session:
+            chat = await session.get(Chat, chat_id)
+            page = await search_messages(session, SearchQuery(chat_id=chat_id), limit=size, offset=offset)
+        if chat is None:
+            return View("Chat topilmadi.")
+        name = esc(chat_label(chat.title, chat.chat_id))
+        header = f"💬 <b>{name}</b> · {CHAT_TYPES.get(chat.chat_type, chat.chat_type)}"
+        rows = list(reversed(page.rows))  # vaqt bo'yicha: eskisi tepada
+
+        builder = InlineKeyboardBuilder()
+        row_sizes: list[int] = []
+        if not rows:
+            empty = "Bu chatda xabar yo'q." if offset == 0 else "Boshqa eski xabar yo'q."
+            text = f"{header}\n\n{empty}"
+        else:
+            lines = [header]
+            last_day = None
+            markers = 0
+            for index, row in enumerate(rows):
+                marker = CIRCLED[index] if index < len(CIRCLED) else f"{index + 1}."
+                day = local_day(row.date, self.tz)
+                if day != last_day:
+                    lines.append(f"\n──────  {day}  ──────")
+                    last_day = day
+                lines.append("")
+                lines.append(self._bubble(marker, row))
+                builder.button(text=marker, callback_data=OpenMessage(pk=row.pk).pack())
+                markers += 1
+            for start in range(0, markers, BUTTONS_PER_ROW):
+                row_sizes.append(min(BUTTONS_PER_ROW, markers - start))
+            text = fit(lines)
+
+        nav: list[tuple[str, str]] = []
+        if page.has_next:
+            nav.append(("⬆️ Eskiroq", Conversation(chat_id=chat_id, offset=offset + size).pack()))
+        if offset > 0:
+            nav.append(("⬇️ Yangiroq", Conversation(chat_id=chat_id, offset=max(0, offset - size)).pack()))
+        for label, data in nav:
+            builder.button(text=label, callback_data=data)
+        if nav:
+            row_sizes.append(len(nav))
+
+        footer = [
+            ("ℹ️ Chat haqida", OpenChat(chat_id=chat_id).pack()),
+            ("🗑 O'chirilgan", ChatMessages(chat_id=chat_id, deleted=True).pack()),
+            ("💬 Chatlar", Menu(action="chats").pack()),
+        ]
+        for label, data in footer:
+            builder.button(text=label, callback_data=data)
+        row_sizes.append(len(footer))
+        builder.adjust(*row_sizes)
+        return View(text, builder.as_markup())
+
+    def _bubble(self, marker: str, row: MessageRow) -> str:
+        who = esc(shorten(self._sender(row), 28))
+        head = f"{marker} <b>{who}</b> · {local_hm(row.date, self.tz)}"
+        if row.text:
+            body = esc(shorten(row.text, CONV_BODY))
+        else:
+            body = media_label(row.media_type) or (f"[{esc(row.action)}]" if row.action else "<i>(matnsiz)</i>")
+        marks = []
+        if row.reply_to_msg_id:
+            marks.append(f"↳ #{row.reply_to_msg_id}")
+        if row.text and row.media_type:
+            marks.append(media_label(row.media_type))
+        if row.edit_count:
+            marks.append("✏️")
+        if row.deletion_status:
+            marks.append("🗑 o'chirilgan")
+        sub = f"\n   <i>{' · '.join(marks)}</i>" if marks else ""
+        return f"{head}\n{body}{sub}"
 
     async def recent(self) -> View:
         return await self.search(SearchQuery(), title="🕘 So'nggi xabarlar")

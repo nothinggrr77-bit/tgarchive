@@ -16,6 +16,7 @@ from aiogram.types import BotCommand, BotCommandScopeChat, CallbackQuery, FSInpu
 from tgarchive.bot.callbacks import (
     ChatMessages,
     ChatsPage,
+    Conversation,
     FetchFile,
     FullText,
     LargePage,
@@ -248,7 +249,13 @@ def build_router(views: Views) -> Router:
 
     @router.callback_query(OpenChat.filter())
     async def on_open_chat(callback: CallbackQuery, callback_data: OpenChat, bot: Bot) -> None:
-        await send(bot, await views.chat(callback_data.chat_id))
+        await edit(bot, callback, await views.chat(callback_data.chat_id))
+        await callback.answer()
+
+    @router.callback_query(Conversation.filter())
+    async def on_conversation(callback: CallbackQuery, callback_data: Conversation, bot: Bot) -> None:
+        # Chatga kirish va varaqlash — shu xabarni almashtirib boradi (Telegram'dagidek bitta ekran)
+        await edit(bot, callback, await views.conversation(callback_data.chat_id, callback_data.offset))
         await callback.answer()
 
     @router.callback_query(ChatMessages.filter())
