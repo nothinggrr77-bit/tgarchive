@@ -59,5 +59,9 @@ class LargePage(CallbackData, prefix="lp"):
     offset: int
 
 
-class MediaKind(CallbackData, prefix="mt"):
-    kind: str
+class MediaPage(CallbackData, prefix="md"):
+    """Media ro'yxati: chat_id=0 — barcha chatlar; kind="" — barcha turlar."""
+
+    chat_id: int = 0
+    kind: str = ""
+    offset: int = 0

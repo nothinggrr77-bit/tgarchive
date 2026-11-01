@@ -119,12 +119,23 @@ bir xil (`o'`, `o‘`, `oʻ`). Qidiruv xabarning **joriy** matni bo‘yicha; esk
 📎 🎬 video: tugilgan_kun.mp4, 312.4 MB — katta fayl, yuklanmagan
 
 matn...
-[↩️ Asl xabar] [✏️ Versiyalar (2)] [⬇️ Yuklab olish] [💬 Chat]
+[↩️ Asl xabar] [✏️ Versiyalar (2)] [⬇️ Yuklab olish] [📖 Chatni o‘qish] [📱 Telegramda ochish]
 ```
 
 - **📎 Faylni olish** — yuklangan faylni bot yuboradi (rasm — rasm, ovozli — ovozli; bo‘lmasa hujjat sifatida).
 - **⬇️ Yuklab olish** — katta (yoki siyosat bo‘yicha yuklanmagan) faylni archiver navbatiga qo‘yadi (`audit_log` ga yoziladi). Himoyalangan va view-once media uchun tugma chiqmaydi.
 - **📃 To‘liq matn** — 3900 belgidan uzun xabar bo‘laklarga bo‘linib yuboriladi.
+- **📱 Telegramda ochish** — xabarni asl Telegram'da ochadi. Ommaviy username bo‘lsa `t.me/<username>/<id>`, maxfiy kanal/superguruhda `t.me/c/<id>/<id>` (faqat a'zolar). Shaxsiy chat va oddiy guruhda Telegram havola bermaydi, shuning uchun tugma chiqmaydi.
+
+## Media (tez topish)
+
+`/media` → turni tanlang (🖼 rasm, 🎬 video, 📄 hujjat, 🎤 ovozli, 🎵 audio, ⏺ video xabar) yoki «📎 Hammasi».
+Ro‘yxatda har bir fayl yonida:
+- **N 📎** — fayl **yuklangan**: bir bosishda darrov yuboradi;
+- **N ⓘ** — fayl hali yuklanmagan (katta yoki navbatda): xabar tafsilotiga o‘tadi, u yerdan «⬇️ Yuklab olish».
+
+O‘chirilgan xabarning mediasi ro‘yxatda **🗑** belgisi bilan ko‘rinadi (agar oldin yuklangan bo‘lsa).
+Chatni o‘qiyotganda **📎 Media** tugmasi — faqat o‘sha chatning fayllari. Fayl nomi bo‘yicha: `/media hisobot`.
 
 ## Xavfsizlik
 

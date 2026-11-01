@@ -20,7 +20,7 @@ from tgarchive.bot.callbacks import (
     FetchFile,
     FullText,
     LargePage,
-    MediaKind,
+    MediaPage,
     Menu,
     OpenChat,
     OpenMessage,
@@ -272,9 +272,12 @@ def build_router(views: Views) -> Router:
             await send(bot, view)
         await callback.answer()
 
-    @router.callback_query(MediaKind.filter())
-    async def on_media_kind(callback: CallbackQuery, callback_data: MediaKind, bot: Bot) -> None:
-        await send(bot, await views.media_kind(callback_data.kind))
+    @router.callback_query(MediaPage.filter())
+    async def on_media_page(callback: CallbackQuery, callback_data: MediaPage, bot: Bot) -> None:
+        view = await views.media_browse(
+            chat_id=callback_data.chat_id, kind=callback_data.kind, offset=callback_data.offset
+        )
+        await edit(bot, callback, view)
         await callback.answer()
 
     @router.callback_query()

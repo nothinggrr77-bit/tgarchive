@@ -87,6 +87,21 @@ def chat_label(title: str | None, chat_id: int) -> str:
     return title or str(chat_id)
 
 
+def telegram_link(chat_type: ChatType, chat_id: int, username: str | None, message_id: int) -> str | None:
+    """Xabarning Telegram'dagi havolasi (uni ilovada ochish uchun), yoki None.
+
+    Ommaviy username bo'lsa ``t.me/<username>/<id>``; maxfiy kanal/superguruhda (``-100…``)
+    ``t.me/c/<ichki_id>/<id>`` (faqat a'zolar ocha oladi). Shaxsiy chat va oddiy guruhda
+    Telegram havola bermaydi — None.
+    """
+    if username:
+        return f"https://t.me/{username}/{message_id}"
+    marked = str(chat_id)
+    if chat_type in (ChatType.CHANNEL, ChatType.SUPERGROUP) and marked.startswith("-100"):
+        return f"https://t.me/c/{marked[4:]}/{message_id}"
+    return None
+
+
 def escape_within(value: str, budget: int) -> tuple[str, bool]:
     """HTML-escape qilingan matn ``budget`` belgiga sig'adigan qilib qisqartiriladi.
 

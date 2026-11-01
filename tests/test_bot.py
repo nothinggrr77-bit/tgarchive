@@ -36,13 +36,15 @@ from tgarchive.bot.callbacks import (
     SearchPage,
     SendFile,
 )
-from tgarchive.bot.format import MESSAGE_LIMIT, escape_within, split_text
+from tgarchive.bot.format import MESSAGE_LIMIT, escape_within, split_text, telegram_link
 from tgarchive.bot.views import Views
+from tgarchive.db.enums import ChatType
+from tgarchive.db.search import SearchQuery, search_messages
+from tl_objects import CHANNEL_ID
 from tgarchive.cli import main
 from tgarchive.config import BotSettings
 from tgarchive.db.engine import Database
 from tgarchive.db.models import AuditLog, Media
-from tgarchive.db.search import SearchQuery
 from tgarchive.db.status import ARCHIVER, beat
 from tgarchive.db.types import utcnow
 from tgarchive.exitcodes import EXIT_OK
@@ -83,6 +85,14 @@ def test_escape_within_never_cuts_an_entity() -> None:
     assert cut and text.endswith("…") and len(text) <= 23
     assert re.fullmatch(r"(&amp;)+…", text)
     assert escape_within("<b>", 100) == ("&lt;b&gt;", False)
+
+
+def test_telegram_link() -> None:
+    assert telegram_link(ChatType.CHANNEL, -1001234567890, None, 55) == "https://t.me/c/1234567890/55"
+    assert telegram_link(ChatType.SUPERGROUP, -1009876543210, None, 7) == "https://t.me/c/9876543210/7"
+    assert telegram_link(ChatType.CHANNEL, -1001234567890, "durov", 55) == "https://t.me/durov/55"
+    assert telegram_link(ChatType.PRIVATE, 7, None, 3) is None  # shaxsiy chatda havola yo'q
+    assert telegram_link(ChatType.GROUP, -555, None, 3) is None  # oddiy guruhda ham yo'q
 
 
 def test_split_text_respects_limit() -> None:
@@ -142,6 +152,18 @@ async def test_message_views(views: Views, archive: Archive) -> None:
     assert "topilmadi" in (await views.message(999_999)).text
 
 
+async def test_message_has_telegram_link_for_channels_only(views: Views, archive: Archive, db: Database) -> None:
+    async with db.read() as session:
+        page = await search_messages(session, SearchQuery(chat_id=CHANNEL_ID), limit=1)
+    channel_view = await views.message(page.rows[0].pk)
+    assert "📱 Telegramda ochish" in button_texts(channel_view)
+    urls = [b.url for row in channel_view.keyboard.inline_keyboard for b in row if b.url]
+    assert urls and urls[0].startswith("https://t.me/c/1234567890/")
+    # Shaxsiy chat xabarida havola bo'lmaydi
+    personal = await views.message(archive.pk[3])
+    assert "📱 Telegramda ochish" not in button_texts(personal)
+
+
 async def test_chats_and_chat_views(views: Views, archive: Archive) -> None:
     chats = await views.chats()
     assert "Ali" in chats.text and "Yangiliklar" in chats.text and "oxirgi postlar" in chats.text
@@ -180,6 +202,22 @@ async def test_conversation_past_the_end(views: Views, archive: Archive) -> None
     assert not any(d.startswith("m:") for d in callbacks(view))  # xabar-tugmalari yo'q
 
 
+async def test_media_type_list_sends_file_in_one_tap(harness: BotHarness, archive: Archive) -> None:
+    from aiogram.methods import SendPhoto
+
+    await harness.feed(text_update("/media"))
+    menu = harness.session.of(SendMessage)[-1]
+    open_photos = next(
+        b.callback_data for row in menu.reply_markup.inline_keyboard for b in row if b.callback_data == "md:0:photo:0"
+    )
+    await harness.feed(callback_update(open_photos))
+    listing = harness.session.of(EditMessageText)[-1]
+    assert "🖼 rasm" in listing.text
+    grab = next(b.callback_data for row in listing.reply_markup.inline_keyboard for b in row if b.text == "1 📎")
+    await harness.feed(callback_update(grab))
+    assert len(harness.session.of(SendPhoto)) == 1  # fayl darrov yuborildi
+
+
 async def test_open_chat_from_list_enters_reading_mode(harness: BotHarness, archive: Archive) -> None:
     await harness.feed(text_update("/chats"))
     chat_list = harness.session.of(SendMessage)[-1]
@@ -210,8 +248,19 @@ async def test_media_views_and_fetch(views: Views, archive: Archive, db: Databas
     assert media.force_download is True and audit.actor_id == OWNER
     assert "yuklangan" in await views.fetch(archive.media[1])  # allaqachon bor — rad etiladi
 
-    photo = await views.media_kind("photo")
-    assert "1–1" in photo.text
+    # Media ro'yxati: yuklangan rasm (msg 1) yonida to'g'ridan-to'g'ri "📎 olish" tugmasi
+    photo = await views.media_browse(kind="photo")
+    assert "1–1" in photo.text and "🖼 rasm" in photo.text
+    assert SendFile(media_id=archive.media[1]).pack() in callbacks(photo)
+
+    # Yuklanmagan katta fayl (msg 2, zip) — "ⓘ" orqali xabarga, SendFile emas
+    docs = await views.media_browse(kind="document")
+    assert OpenMessage(pk=archive.pk[2]).pack() in callbacks(docs)
+    assert SendFile(media_id=archive.media[2]).pack() not in callbacks(docs)
+
+    # Chat bo'yicha media (Ali): rasm va hujjat bitta ro'yxatda
+    in_chat = await views.media_browse(chat_id=7)
+    assert "🖼 rasm" in in_chat.text and "📄 hujjat" in in_chat.text
 
 
 async def test_file_to_send(views: Views, archive: Archive, monkeypatch: pytest.MonkeyPatch) -> None:

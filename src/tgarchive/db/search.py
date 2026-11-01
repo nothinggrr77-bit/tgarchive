@@ -353,6 +353,63 @@ async def chat_detail(session: AsyncSession, chat_id: int) -> ChatDetail | None:
     return ChatDetail(chat, state, int(total), int(deleted or 0), int(edited or 0), int(media_done or 0), first, last)
 
 
+# ----------------------------------------------------------------- media
+
+
+@dataclass(frozen=True, slots=True)
+class MediaBrowseRow:
+    pk: int
+    chat_id: int
+    chat_title: str | None
+    message_id: int
+    date: datetime
+    media_type: MediaType
+    file_name: str | None
+    size: int | None
+    status: MediaStatus
+    media_id: int
+    deletion_status: DeletionStatus | None
+
+
+async def list_media(
+    session: AsyncSession,
+    *,
+    chat_id: int | None = None,
+    media_type: MediaType | None = None,
+    limit: int = 10,
+    offset: int = 0,
+) -> Page:
+    """Fayl ko'rinishidagi media, eng yangisi birinchi. ``/media`` ro'yxati uchun."""
+    stmt = (
+        select(Media, Message, Chat.title)
+        .join(Message, Message.id == Media.message_pk)
+        .join(Chat, Chat.chat_id == Message.chat_id)
+        .where(Media.superseded_at.is_(None))
+    )
+    if chat_id is not None:
+        stmt = stmt.where(Message.chat_id == chat_id)
+    if media_type is not None:
+        stmt = stmt.where(Media.media_type == media_type)
+    stmt = stmt.order_by(Message.date.desc(), Media.id.desc()).limit(limit + 1).offset(offset)
+    rows = [
+        MediaBrowseRow(
+            pk=message.id,
+            chat_id=message.chat_id,
+            chat_title=title,
+            message_id=message.message_id,
+            date=message.date,
+            media_type=media.media_type,
+            file_name=media.file_name,
+            size=media.stored_size or media.expected_size,
+            status=media.status,
+            media_id=media.id,
+            deletion_status=message.deletion_status,
+        )
+        for media, message, title in await session.execute(stmt)
+    ]
+    return Page(rows[:limit], offset, len(rows) > limit)
+
+
 # --------------------------------------------------------------- xabar
 
 

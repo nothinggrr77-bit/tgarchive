@@ -25,7 +25,7 @@ from tgarchive.bot.callbacks import (
     FetchFile,
     FullText,
     LargePage,
-    MediaKind,
+    MediaPage,
     Menu,
     OpenChat,
     OpenMessage,
@@ -50,6 +50,7 @@ from tgarchive.bot.format import (
     media_label,
     shorten,
     split_text,
+    telegram_link,
 )
 from tgarchive.config import BotSettings
 from tgarchive.db.engine import Database
@@ -70,6 +71,7 @@ from tgarchive.db.search import (
     archive_stats,
     chat_detail,
     list_chats,
+    list_media,
     message_detail,
     search_messages,
 )
@@ -341,6 +343,9 @@ class Views:
         ):
             builder.button(text="⬇️ Yuklab olish", callback_data=FetchFile(media_id=media.id).pack())
         builder.button(text="📖 Chatni o'qish", callback_data=Conversation(chat_id=chat.chat_id).pack())
+        link = telegram_link(chat.chat_type, chat.chat_id, chat.username, m.message_id)
+        if link is not None:
+            builder.button(text="📱 Telegramda ochish", url=link)
         builder.adjust(2)
         return View(text, builder.as_markup())
 
@@ -507,12 +512,13 @@ class Views:
 
         footer = [
             ("ℹ️ Chat haqida", OpenChat(chat_id=chat_id).pack()),
+            ("📎 Media", MediaPage(chat_id=chat_id).pack()),
             ("🗑 O'chirilgan", ChatMessages(chat_id=chat_id, deleted=True).pack()),
             ("💬 Chatlar", Menu(action="chats").pack()),
         ]
         for label, data in footer:
             builder.button(text=label, callback_data=data)
-        row_sizes.append(len(footer))
+        row_sizes.extend((2, 2))
         builder.adjust(*row_sizes)
         return View(text, builder.as_markup())
 
@@ -548,23 +554,62 @@ class Views:
             summary = await media_summary(session)
         builder = InlineKeyboardBuilder()
         builder.button(text="📦 Katta fayllar", callback_data=LargePage(offset=0).pack())
+        builder.button(text="📎 Hammasi", callback_data=MediaPage().pack())
         for kind in (MediaType.PHOTO, MediaType.VIDEO, MediaType.DOCUMENT, MediaType.VOICE, MediaType.AUDIO, MediaType.VIDEO_NOTE):
-            builder.button(text=media_label(kind), callback_data=MediaKind(kind=kind.value).pack())
-        builder.adjust(1, 3, 3)
+            builder.button(text=media_label(kind), callback_data=MediaPage(kind=kind.value).pack())
+        builder.adjust(2, 3, 3)
         text = (
             f"📎 <b>Media</b>\n{esc(format_media_summary(summary))}\n\n"
+            "Turni tanlang — har bir fayl yonidagi 📎 tugmasi uni darrov yuboradi.\n"
             "Fayl nomi bo'yicha: <code>/media nom</code>"
         )
         return View(text, builder.as_markup())
 
-    async def media_kind(self, kind: str) -> View:
+    async def media_browse(self, *, chat_id: int = 0, kind: str = "", offset: int = 0) -> View:
+        """Media ro'yxati: har bir yuklangan fayl yonida 📎 — darrov yuboradi, aks holda ⓘ — tafsilot."""
         try:
-            media_type = MediaType(kind)
+            media_type = MediaType(kind) if kind else None
         except ValueError:
             return View("Noma'lum media turi.")
-        return await self.search(
-            SearchQuery(media_type=media_type), title=f"{media_label(media_type)} — so'nggilari"
+        cid = chat_id or None
+        async with self.db.read() as session:
+            page = await list_media(session, chat_id=cid, media_type=media_type, limit=self.page_size, offset=offset)
+            chat = await session.get(Chat, cid) if cid is not None else None
+        label = media_label(media_type) if media_type else "📎 Media"
+        where = f" — {esc(chat_label(chat.title if chat else None, cid))}" if cid is not None else ""
+        header = f"{label}{where}"
+        if not page.rows:
+            return View(f"{header}\n\n" + ("Media topilmadi." if offset == 0 else "Boshqa media yo'q."))
+        lines = [f"{header} — {offset + 1}–{offset + len(page.rows)}", ""]
+        builder = InlineKeyboardBuilder()
+        for index, row in enumerate(page.rows, start=offset + 1):
+            name = row.file_name or MEDIA_NAMES.get(row.media_type, row.media_type.value)
+            mark = " 🗑" if row.deletion_status else ""
+            chat_part = (
+                f" · <i>{esc(shorten(chat_label(row.chat_title, row.chat_id), 24))}</i>" if cid is None else ""
+            )
+            lines.append(
+                f"<b>{index}.</b> {local_time(row.date, self.tz)} · {media_label(row.media_type)} · "
+                f"{format_size(row.size)}{mark}\n    {esc(shorten(name, 48))}{chat_part}"
+            )
+            if row.status is MediaStatus.DONE:
+                builder.button(text=f"{index} 📎", callback_data=SendFile(media_id=row.media_id).pack())
+            else:
+                builder.button(text=f"{index} ⓘ", callback_data=OpenMessage(pk=row.pk).pack())
+        rows: list[int] = []
+        count = len(page.rows)
+        for start in range(0, count, BUTTONS_PER_ROW):
+            rows.append(min(BUTTONS_PER_ROW, count - start))
+        nav = _nav(
+            offset, self.page_size, page.has_next, lambda o: MediaPage(chat_id=chat_id, kind=kind, offset=o).pack()
         )
+        for text_, data in nav:
+            builder.button(text=text_, callback_data=data)
+        if nav:
+            rows.append(len(nav))
+        builder.adjust(*rows)
+        lines.append("\n📎 — faylni darrov yuboradi · ⓘ — tafsilot (yuklanmagan faylni olish ham shu yerda).")
+        return View(fit(lines), builder.as_markup())
 
     async def media_by_name(self, name: str) -> View:
         return await self.search(SearchQuery(file_name=name[:100]), title=f"📎 Fayl nomi: «{esc(name[:100])}»")
