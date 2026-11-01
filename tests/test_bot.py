@@ -126,7 +126,7 @@ async def test_empty_search(views: Views, archive: Archive) -> None:
 
 async def test_message_views(views: Views, archive: Archive) -> None:
     reply = await views.message(archive.pk[4])
-    assert "↩️ Javob: Ali: &lt;b&gt;xavfli" in reply.text and "↩️ Asl xabar" in button_texts(reply)
+    assert "↩️ Javob: Ali: &lt;b&gt;xavfli" in reply.text and "🧵 Zanjir" in button_texts(reply)
 
     edited = await views.message(archive.pk[5])
     assert "✏️ Tahrirlangan: 1 marta" in edited.text and "✏️ Versiyalar (1)" in button_texts(edited)
@@ -200,6 +200,84 @@ async def test_conversation_past_the_end(views: Views, archive: Archive) -> None
     assert "Boshqa eski xabar yo'q." in view.text
     assert "⬇️ Yangiroq" in button_texts(view) and "⬆️ Eskiroq" not in button_texts(view)
     assert not any(d.startswith("m:") for d in callbacks(view))  # xabar-tugmalari yo'q
+
+
+async def test_thread_view(views: Views, archive: Archive) -> None:
+    thread = await views.thread(archive.pk[4])  # #4 → #3 ga javob
+    assert "🧵 <b>Zanjir</b>" in thread.text
+    assert "xavfli" in thread.text and "salom javob" in thread.text  # ota + xabar
+    assert thread.text.count("▸") == 1  # faqat o'rganilayotgan xabar belgili
+    data = callbacks(thread)
+    assert OpenMessage(pk=archive.pk[3]).pack() in data and OpenMessage(pk=archive.pk[4]).pack() in data
+
+
+async def test_read_around_highlights_target(views: Views, archive: Archive) -> None:
+    view = await views.read_around(archive.pk[3])  # page_size=2
+    assert "▸" in view.text and "xavfli" in view.text  # #3 belgilangan va ko'rinadi
+    assert view.text.startswith("💬 <b>Ali</b>")
+
+
+async def test_digest_handles_old_archive(views: Views, archive: Archive) -> None:
+    view = await views.digest_report(7)  # fixture xabarlari eski → bu davrda yo'q
+    assert "🗞 <b>Hisobot" in view.text and "yangi xabar yo'q" in view.text
+
+
+async def test_stats_shows_activity_and_senders(views: Views, archive: Archive) -> None:
+    view = await views.stats()
+    assert "Oxirgi 7 kun" in view.text and "Eng faol yuboruvchilar" in view.text
+
+
+async def _make_album(db: Database, media_dir: Path, *, chat_id: int = 8) -> list[int]:
+    """8-chatga 3 faylli albom (2 rasm + 1 video) qo'shadi, diskka ham yozadi. message_id'lar qaytadi."""
+    from datetime import UTC, datetime
+
+    from tgarchive.db.enums import ArchiveMode, ChatType, MediaStatus, MediaType, MessageSource
+    from tgarchive.db.models import Chat, Media, Message
+
+    kinds = [MediaType.PHOTO, MediaType.PHOTO, MediaType.VIDEO]
+    pks: list[int] = []
+    async with db.write() as s:
+        s.add(Chat(chat_id=chat_id, chat_type=ChatType.PRIVATE, title="Vali", is_protected=False, archive_mode=ArchiveMode.FULL))
+        await s.flush()
+        for i, mt in enumerate(kinds, start=1):
+            when = datetime(2026, 5, 1, 10, i, tzinfo=UTC)
+            m = Message(
+                chat_id=chat_id, message_id=i, date=when, is_outgoing=False, grouped_id=555, media_type=mt,
+                text="sayohat" if i == 1 else None, content_hash=f"h{i}", edit_count=0,
+                source=MessageSource.HISTORY, archived_at=when, updated_at=when, noforwards=False,
+            )
+            s.add(m)
+            await s.flush()
+            pks.append(m.id)
+            rel = f"{chat_id}/x/{i}.bin"
+            path = media_dir / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"data")
+            s.add(Media(message_pk=m.id, media_type=mt, status=MediaStatus.DONE, local_path=rel,
+                        stored_size=4, attempts=0, created_at=when, updated_at=when))
+    return pks
+
+
+async def test_album_view_and_send(views: Views, archive: Archive, db: Database) -> None:
+    from aiogram.methods import SendMediaGroup
+
+    pks = await _make_album(db, views.settings.paths.media)
+    view = await views.album(pks[0])
+    assert "🖼 <b>Albom</b>" in view.text and "3 ta fayl" in view.text and "sayohat" in view.text
+    from tgarchive.bot.callbacks import SendAlbum
+
+    assert SendAlbum(pk=pks[0]).pack() in callbacks(view)
+
+    files = await views.album_files(pks[0])
+    assert not isinstance(files, str) and len(files) == 3
+
+    # Dispatcher orqali: 2 rasm + 1 video bitta media-guruh bo'lib ketadi
+    session = RecordingSession()
+    bot = Bot(TOKEN, session=session)
+    dp = build_dispatcher(db, views.settings)
+    await dp.feed_update(bot, callback_update(SendAlbum(pk=pks[0]).pack()))
+    [group] = session.of(SendMediaGroup)
+    assert len(group.media) == 3
 
 
 async def test_media_type_list_sends_file_in_one_tap(harness: BotHarness, archive: Archive) -> None:

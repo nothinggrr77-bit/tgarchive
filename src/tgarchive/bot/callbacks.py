@@ -27,6 +27,28 @@ class Versions(CallbackData, prefix="v"):
     pk: int
 
 
+class Thread(CallbackData, prefix="th"):
+    """Xabarning to'liq reply-zanjiri (ota xabarlar + javoblar)."""
+
+    pk: int
+
+
+class ReadAround(CallbackData, prefix="ra"):
+    """Suhbatni aynan shu xabar turgan joydan ochish."""
+
+    pk: int
+
+
+class Album(CallbackData, prefix="al"):
+    """Bitta grouped_id ostidagi albom (bir nechta rasm/video) xabarlari."""
+
+    pk: int
+
+
+class SendAlbum(CallbackData, prefix="sa"):
+    pk: int
+
+
 class SendFile(CallbackData, prefix="f"):
     media_id: int
 

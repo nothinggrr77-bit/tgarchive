@@ -10,7 +10,7 @@ import secrets
 import shutil
 from collections import OrderedDict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -20,6 +20,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 from tgarchive.bot.callbacks import (
     ChatMessages,
+    Album,
     ChatsPage,
     Conversation,
     FetchFile,
@@ -29,8 +30,11 @@ from tgarchive.bot.callbacks import (
     Menu,
     OpenChat,
     OpenMessage,
+    ReadAround,
     SearchPage,
+    SendAlbum,
     SendFile,
+    Thread,
     Versions,
 )
 from tgarchive.bot.format import (
@@ -68,15 +72,20 @@ from tgarchive.db.models import AuditLog, Chat, DeletionEvent, Media, Message
 from tgarchive.db.search import (
     MessageRow,
     SearchQuery,
+    activity_by_day,
+    album_items,
     archive_stats,
     chat_detail,
+    digest,
     list_chats,
     list_media,
     message_detail,
+    message_position,
     search_messages,
+    top_senders,
 )
 from tgarchive.db.status import ARCHIVER, format_backup_meta, format_summary, get_heartbeat, import_summary
-from tgarchive.db.store import add_audit, get_versions
+from tgarchive.db.store import add_audit, get_replies, get_reply_chain, get_versions
 from tgarchive.db.types import utcnow
 from tgarchive.mediafiles import resolve_media_path
 
@@ -111,7 +120,8 @@ HELP = """<b>Buyruqlar</b>
 /chats — arxivdagi chatlar (chatni bosib, suhbatni Telegram'dagidek o'qiysiz)
 /deleted — o'chirilganligi qayd etilgan xabarlar
 /media — media: turlar bo'yicha, katta fayllar; /media <i>nom</i> — fayl nomi bo'yicha
-/stats — arxiv statistikasi
+/stats — arxiv statistikasi (faollik, eng faol chatlar va yuboruvchilar)
+/digest — oxirgi 7 kun hisoboti (/digest 30 — 30 kun)
 /status — archiver, zaxira va server holati
 /export <i>filtrlar</i> — eksport (zip: HTML yoki JSON), /export bilan batafsil
 /audit — audit jurnali va o'chirish hodisalari
@@ -322,6 +332,8 @@ class Views:
             head.append(media_label(m.media_type))
         if detail.reply_count:
             head.append(f"💬 Shu xabarga javoblar: {detail.reply_count}")
+        if m.grouped_id:
+            head.append("🖼 Albom (bir nechta fayl)")
 
         header = "\n".join(head)
         body = m.text or (f"[servis: {m.action}]" if m.action else "")
@@ -329,12 +341,6 @@ class Views:
         text = header + (f"\n\n{shown}" if shown else "")
 
         builder = InlineKeyboardBuilder()
-        if detail.parent is not None:
-            builder.button(text="↩️ Asl xabar", callback_data=OpenMessage(pk=detail.parent.id).pack())
-        if detail.version_count:
-            builder.button(text=f"✏️ Versiyalar ({detail.version_count})", callback_data=Versions(pk=pk).pack())
-        if truncated:
-            builder.button(text="📃 To'liq matn", callback_data=FullText(pk=pk).pack())
         media = detail.media
         if media is not None and media.status is MediaStatus.DONE:
             builder.button(text="📎 Faylni olish", callback_data=SendFile(media_id=media.id).pack())
@@ -342,7 +348,15 @@ class Views:
             media.skip_reason in REVIEWABLE_SKIPS or media.status is MediaStatus.FAILED
         ):
             builder.button(text="⬇️ Yuklab olish", callback_data=FetchFile(media_id=media.id).pack())
-        builder.button(text="📖 Chatni o'qish", callback_data=Conversation(chat_id=chat.chat_id).pack())
+        if m.grouped_id:
+            builder.button(text="🖼 Albomni ko'rish", callback_data=Album(pk=pk).pack())
+        if detail.parent is not None or detail.reply_count:
+            builder.button(text="🧵 Zanjir", callback_data=Thread(pk=pk).pack())
+        if detail.version_count:
+            builder.button(text=f"✏️ Versiyalar ({detail.version_count})", callback_data=Versions(pk=pk).pack())
+        if truncated:
+            builder.button(text="📃 To'liq matn", callback_data=FullText(pk=pk).pack())
+        builder.button(text="📖 Shu yerdan o'qish", callback_data=ReadAround(pk=pk).pack())
         link = telegram_link(chat.chat_type, chat.chat_id, chat.username, m.message_id)
         if link is not None:
             builder.button(text="📱 Telegramda ochish", url=link)
@@ -461,11 +475,23 @@ class Views:
 
     # ------------------------------------------------------ suhbat (o'qish)
 
-    async def conversation(self, chat_id: int, offset: int = 0) -> View:
+    async def read_around(self, pk: int) -> View:
+        """Suhbatni aynan shu xabar turgan oynadan ochadi va o'sha xabarni belgilaydi."""
+        async with self.db.read() as session:
+            message = await session.get(Message, pk)
+            position = await message_position(session, pk)
+        if message is None or position is None:
+            return View("Xabar topilmadi.")
+        size = min(self.page_size, CONV_MAX)
+        offset = (position // size) * size
+        return await self.conversation(message.chat_id, offset, highlight_pk=pk)
+
+    async def conversation(self, chat_id: int, offset: int = 0, *, highlight_pk: int | None = None) -> View:
         """Chatni Telegram'dagidek o'qish: eng yangi oynadan boshlab, eskisi tepada, yangisi pastda.
 
         ``⬆️ Eskiroq`` oynani tarixga suradi (offset oshadi), ``⬇️ Yangiroq`` qaytaradi.
         Har bir xabarga ① ② … tugmasi — to'liq matn, media va javob zanjirini ochadi.
+        ``highlight_pk`` berilgan xabar ▸ bilan ajratiladi (``read_around`` dan kelganda).
         """
         size = min(self.page_size, CONV_MAX)
         async with self.db.read() as session:
@@ -493,7 +519,7 @@ class Views:
                     lines.append(f"\n──────  {day}  ──────")
                     last_day = day
                 lines.append("")
-                lines.append(self._bubble(marker, row))
+                lines.append(self._bubble(marker, row, highlight=row.pk == highlight_pk))
                 builder.button(text=marker, callback_data=OpenMessage(pk=row.pk).pack())
                 markers += 1
             for start in range(0, markers, BUTTONS_PER_ROW):
@@ -522,9 +548,117 @@ class Views:
         builder.adjust(*row_sizes)
         return View(text, builder.as_markup())
 
-    def _bubble(self, marker: str, row: MessageRow) -> str:
+    # --------------------------------------------------- zanjir va albom
+
+    def _msg_line(self, marker: str, m: Message, chat: Chat | None, *, point: bool = False) -> str:
+        who = esc(shorten(self._who(m, chat), 28))
+        pt = "▸ " if point else ""
+        if m.text:
+            body = esc(shorten(m.text, 220))
+        else:
+            body = media_label(m.media_type) or (f"[{esc(m.action)}]" if m.action else "<i>(matnsiz)</i>")
+        marks = []
+        if m.text and m.media_type:
+            marks.append(media_label(m.media_type))
+        if m.deletion_status:
+            marks.append("🗑 o'chirilgan")
+        sub = f"\n   <i>{' · '.join(marks)}</i>" if marks else ""
+        return f"{pt}{marker} <b>{who}</b> · {local_hm(m.date, self.tz)}\n{body}{sub}"
+
+    async def thread(self, pk: int) -> View:
+        """Xabarning to'liq reply-zanjiri: ota xabarlar (tepada), shu xabar (▸), so'ng javoblar."""
+        async with self.db.read() as session:
+            message = await session.get(Message, pk)
+            if message is None:
+                return View("Xabar topilmadi.")
+            chat = await session.get(Chat, message.chat_id)
+            ancestors = await get_reply_chain(session, message)
+            replies = await get_replies(session, message, limit=self.page_size)
+        lines = [f"🧵 <b>Zanjir</b> — {esc(chat_label(chat.title if chat else None, message.chat_id))}"]
+        builder = InlineKeyboardBuilder()
+        marks = 0
+
+        def add(m: Message, *, point: bool = False) -> None:
+            nonlocal marks
+            marker = CIRCLED[marks] if marks < len(CIRCLED) else f"{marks + 1}."
+            lines.append("")
+            lines.append(self._msg_line(marker, m, chat, point=point))
+            builder.button(text=marker, callback_data=OpenMessage(pk=m.id).pack())
+            marks += 1
+
+        if ancestors:
+            lines.append("<i>Yuqoriga — asl xabargacha:</i>")
+            for anc in reversed(ancestors):  # eng eski ota birinchi
+                add(anc)
+        add(message, point=True)
+        if replies:
+            lines.append("\n<b>Javoblar:</b>")
+            for reply in replies:
+                add(reply)
+        row_sizes = [min(BUTTONS_PER_ROW, marks - s) for s in range(0, marks, BUTTONS_PER_ROW)]
+        builder.button(text="⬅️ Xabar", callback_data=OpenMessage(pk=pk).pack())
+        row_sizes.append(1)
+        builder.adjust(*row_sizes)
+        return View(fit(lines), builder.as_markup())
+
+    async def album(self, pk: int) -> View:
+        async with self.db.read() as session:
+            message = await session.get(Message, pk)
+            if message is None or not message.grouped_id:
+                return View("Bu xabar albom emas.")
+            chat = await session.get(Chat, message.chat_id)
+            items = await album_items(session, message.chat_id, message.grouped_id)
+        done = [it for it in items if it.status is MediaStatus.DONE]
+        lines = [
+            f"🖼 <b>Albom</b> — {esc(chat_label(chat.title if chat else None, message.chat_id))} · {len(items)} ta fayl",
+            "",
+        ]
+        for index, it in enumerate(items, start=1):
+            name = it.file_name or MEDIA_NAMES.get(it.media_type, it.media_type.value)
+            state = "✓" if it.status is MediaStatus.DONE else "⏳"
+            lines.append(f"{index}. {media_label(it.media_type)} · {format_size(it.size)} {state} {esc(shorten(name, 40))}")
+        caption = next((it.caption for it in items if it.caption), None)
+        if caption:
+            lines.append("\n" + esc(shorten(caption, 400)))
+        builder = InlineKeyboardBuilder()
+        if done:
+            builder.button(text=f"📎 Albomni olish ({len(done)})", callback_data=SendAlbum(pk=pk).pack())
+        builder.button(text="⬅️ Xabar", callback_data=OpenMessage(pk=pk).pack())
+        builder.adjust(1)
+        return View(fit(lines), builder.as_markup())
+
+    async def album_files(self, pk: int) -> list[FileToSend] | str:
+        async with self.db.read() as session:
+            message = await session.get(Message, pk)
+            if message is None or not message.grouped_id:
+                return "Albom topilmadi."
+            items = await album_items(session, message.chat_id, message.grouped_id)
+        out: list[FileToSend] = []
+        caption_used = False
+        for it in items:
+            if it.status is not MediaStatus.DONE or not it.local_path:
+                continue
+            try:
+                path = resolve_media_path(self.settings.paths.media, it.local_path)
+            except ValueError:
+                continue
+            if not path.is_file() or path.stat().st_size > BOT_UPLOAD_LIMIT:
+                continue
+            cap = esc(shorten(it.caption, 900)) if it.caption and not caption_used else ""
+            caption_used = caption_used or bool(cap)
+            out.append(FileToSend(path, it.media_type, cap, it.file_name))
+        if not out:
+            return "Albomda yuborish mumkin bo'lgan yuklangan fayl yo'q."
+        async with self.db.write() as session:
+            await add_audit(
+                session, "bot_send_album", actor="owner", actor_id=self.settings.owner_id, target=f"msg:{pk}"
+            )
+        return out[:30]
+
+    def _bubble(self, marker: str, row: MessageRow, *, highlight: bool = False) -> str:
         who = esc(shorten(self._sender(row), 28))
-        head = f"{marker} <b>{who}</b> · {local_hm(row.date, self.tz)}"
+        point = "▸ " if highlight else ""
+        head = f"{point}{marker} <b>{who}</b> · {local_hm(row.date, self.tz)}"
         if row.text:
             body = esc(shorten(row.text, CONV_BODY))
         else:
@@ -678,9 +812,12 @@ class Views:
     # ------------------------------------------------------- statistika
 
     async def stats(self) -> View:
+        now = utcnow()
         async with self.db.read() as session:
             stats = await archive_stats(session)
             media = await media_summary(session)
+            senders = await top_senders(session, limit=5)
+            by_day = await activity_by_day(session, days=7, tz=self.tz, now=now)
         modes = ", ".join(f"{MODES.get(k, k)}: {v}" for k, v in sorted(stats.chats_by_mode.items(), key=str)) or "-"
         lines = [
             "📊 <b>Arxiv statistikasi</b>",
@@ -691,6 +828,7 @@ class Views:
             "Tarix importi: " + (", ".join(f"{k}: {v}" for k, v in sorted(stats.backfill_by_status.items())) or "-"),
             esc(format_media_summary(media)),
             f"Baza hajmi: {format_size(self._db_size())}",
+            f"\n<b>Oxirgi 7 kun</b>\n{self._sparkline(by_day, now)}",
         ]
         if stats.top_chats:
             lines.append("\n<b>Eng ko'p xabarli chatlar</b>")
@@ -698,6 +836,43 @@ class Views:
                 f"{i}. {esc(shorten(chat_label(c.title, c.chat_id), 40))} — {c.message_count}"
                 for i, c in enumerate(stats.top_chats, start=1)
             ]
+        if senders:
+            lines.append("\n<b>Eng faol yuboruvchilar</b>")
+            lines += [
+                f"{i}. {esc(shorten(s.name or str(s.sender_id), 32))} — {s.count}"
+                for i, s in enumerate(senders, start=1)
+            ]
+        return View(fit(lines))
+
+    _SPARK = "▁▂▃▄▅▆▇█"
+
+    def _sparkline(self, by_day: dict[str, int], now: datetime) -> str:
+        """Oxirgi 7 kun uchun kunlik faollik: ustunchalar + umumiy son."""
+        days = [(now.astimezone(self.tz) - timedelta(days=d)).strftime("%Y-%m-%d") for d in range(6, -1, -1)]
+        counts = [by_day.get(d, 0) for d in days]
+        peak = max(counts) or 1
+        bars = "".join(self._SPARK[min(len(self._SPARK) - 1, c * (len(self._SPARK) - 1) // peak)] for c in counts)
+        return f"{bars}  (jami {sum(counts)}, kunlik eng ko'p {max(counts)})"
+
+    async def digest_report(self, days: int = 7) -> View:
+        now = utcnow()
+        since = now - timedelta(days=days)
+        async with self.db.read() as session:
+            data = await digest(session, since=since, tz=self.tz, now=now)
+        lines = [
+            f"🗞 <b>Hisobot — oxirgi {days} kun</b>",
+            f"Jami xabarlar: <b>{data.total}</b> (siz yozgan: {data.outgoing})",
+            f"Media: {data.media} · o'chirilgan: {data.deleted}",
+            self._sparkline(data.by_day, now),
+        ]
+        if data.top_chats:
+            lines.append("\n<b>Eng faol chatlar</b>")
+            lines += [
+                f"{i}. {esc(shorten(chat_label(c.title, c.chat_id), 40))} — {c.message_count}"
+                for i, c in enumerate(data.top_chats, start=1)
+            ]
+        else:
+            lines.append("\nBu davrda yangi xabar yo'q.")
         return View(fit(lines))
 
     async def status(self) -> View:

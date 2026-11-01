@@ -165,3 +165,46 @@ async def test_archive_stats(db: Database, archive: Archive) -> None:
     assert (stats.deleted_confirmed, stats.deleted_probable) == (1, 0)
     assert stats.chats_by_mode == {"full": 1, "window": 1}
     assert stats.top_chats[0].chat_id == ALI_ID
+
+
+async def test_top_senders(db: Database, archive: Archive) -> None:
+    from tgarchive.db.search import top_senders
+    from tl_objects import ME_ID
+
+    async with db.read() as session:
+        senders = {s.sender_id: s for s in await top_senders(session)}
+    assert senders[ALI_ID].count == 7  # #1–#7 Ali'dan (fixture'da sender_name yo'q → None)
+    assert senders[ME_ID].count == 1  # chiquvchi #8
+
+
+async def test_message_position_and_album(db: Database, tmp_path) -> None:
+    from datetime import UTC, datetime
+
+    from tgarchive.db.enums import ArchiveMode, ChatType, MediaStatus, MediaType, MessageSource
+    from tgarchive.db.models import Chat, Media, Message
+    from tgarchive.db.search import album_items, message_position
+
+    async with db.write() as s:
+        s.add(Chat(chat_id=8, chat_type=ChatType.PRIVATE, title="Vali", is_protected=False, archive_mode=ArchiveMode.FULL))
+        await s.flush()
+        pks = []
+        for i, mt in enumerate([MediaType.PHOTO, MediaType.PHOTO, MediaType.VIDEO], start=1):
+            when = datetime(2026, 5, 1, 10, i, tzinfo=UTC)
+            m = Message(
+                chat_id=8, message_id=i, date=when, is_outgoing=False, grouped_id=555, media_type=mt,
+                text="albom izoh" if i == 1 else None, content_hash=f"h{i}", edit_count=0,
+                source=MessageSource.HISTORY, archived_at=when, updated_at=when, noforwards=False,
+            )
+            s.add(m)
+            await s.flush()
+            pks.append(m.id)
+            s.add(Media(message_pk=m.id, media_type=mt, status=MediaStatus.DONE, local_path=f"8/x/{i}.jpg",
+                        stored_size=100, attempts=0, created_at=when, updated_at=when))
+
+    async with db.read() as session:
+        items = await album_items(session, 8, 555)
+        assert [it.message_id for it in items] == [1, 2, 3] and all(it.status is MediaStatus.DONE for it in items)
+        assert items[0].caption == "albom izoh"
+        assert await message_position(session, pks[2]) == 0  # eng yangisi
+        assert await message_position(session, pks[0]) == 2  # eng eskisi: 2 ta undan yangi
+        assert await message_position(session, 999999) is None

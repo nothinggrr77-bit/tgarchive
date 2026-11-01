@@ -18,7 +18,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Integer, Select, column, exists, func, select, text
+from sqlalchemy import Integer, Select, column, exists, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tgarchive.db.enums import ArchiveMode, ChatType, DeletionStatus, MediaStatus, MediaType, SyncStatus
@@ -410,6 +410,63 @@ async def list_media(
     return Page(rows[:limit], offset, len(rows) > limit)
 
 
+async def message_position(session: AsyncSession, pk: int) -> int | None:
+    """Xabarning chatdagi o'rni (0 — eng yangi). Suhbatni shu joydan ochish uchun.
+
+    search_messages tartibi (date DESC, id DESC) bilan bir xil: shundan oldin keladigan
+    (ya'ni yangiroq) xabarlar soni.
+    """
+    target = await session.get(Message, pk)
+    if target is None:
+        return None
+    return await session.scalar(
+        select(func.count())
+        .select_from(Message)
+        .where(
+            Message.chat_id == target.chat_id,
+            or_(Message.date > target.date, (Message.date == target.date) & (Message.id > target.id)),
+        )
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class AlbumItem:
+    pk: int
+    message_id: int
+    media_type: MediaType
+    file_name: str | None
+    size: int | None
+    status: MediaStatus
+    media_id: int
+    local_path: str | None
+    caption: str | None
+
+
+async def album_items(session: AsyncSession, chat_id: int, grouped_id: int, *, limit: int = 20) -> list[AlbumItem]:
+    """Bitta albom (bir xil ``grouped_id``) ichidagi fayllar, yuborilish tartibida."""
+    rows = await session.execute(
+        select(Media, Message)
+        .join(Message, Message.id == Media.message_pk)
+        .where(Message.chat_id == chat_id, Message.grouped_id == grouped_id, Media.superseded_at.is_(None))
+        .order_by(Message.message_id)
+        .limit(limit)
+    )
+    return [
+        AlbumItem(
+            pk=message.id,
+            message_id=message.message_id,
+            media_type=media.media_type,
+            file_name=media.file_name,
+            size=media.stored_size or media.expected_size,
+            status=media.status,
+            media_id=media.id,
+            local_path=media.local_path,
+            caption=message.text,
+        )
+        for media, message in rows
+    ]
+
+
 # --------------------------------------------------------------- xabar
 
 
@@ -502,4 +559,87 @@ async def archive_stats(session: AsyncSession, *, top: int = 5) -> ArchiveStats:
         chats_by_mode=modes,
         backfill_by_status={k: v for k, v in statuses.items() if k != SyncStatus.DISABLED},
         top_chats=[ChatRow(c.chat_id, c.title, c.chat_type, c.archive_mode, int(n), d) for c, n, d in top_rows],
+    )
+
+
+# ---------------------------------------------------- statistika (kengaytirilgan)
+
+
+@dataclass(frozen=True, slots=True)
+class SenderRow:
+    sender_id: int
+    name: str | None
+    count: int
+
+
+async def top_senders(session: AsyncSession, *, limit: int = 10) -> list[SenderRow]:
+    """Eng ko'p xabar yozgan yuboruvchilar (chiquvchi — o'zingiz — ham kiradi)."""
+    rows = await session.execute(
+        select(Message.sender_id, func.max(Message.sender_name), func.count())
+        .where(Message.sender_id.is_not(None))
+        .group_by(Message.sender_id)
+        .order_by(func.count().desc())
+        .limit(limit)
+    )
+    return [SenderRow(sid, name, int(n)) for sid, name, n in rows]
+
+
+def _tz_modifier(tz: ZoneInfo, now: datetime) -> str:
+    """SQLite ``date(col, modifier)`` uchun: UTC'dan mahalliy kunga siljish (masalan '+18000 seconds')."""
+    offset = tz.utcoffset(now) or timedelta(0)
+    return f"{int(offset.total_seconds()):+d} seconds"
+
+
+async def activity_by_day(session: AsyncSession, *, days: int, tz: ZoneInfo, now: datetime) -> dict[str, int]:
+    """Oxirgi ``days`` kun uchun kunlik xabarlar soni (mahalliy kun bo'yicha)."""
+    cutoff = now - timedelta(days=days)
+    modifier = _tz_modifier(tz, now)
+    day = func.date(Message.date, modifier)
+    rows = await session.execute(
+        select(day, func.count()).where(Message.date >= cutoff).group_by(day).order_by(day)
+    )
+    return {str(d): int(n) for d, n in rows}
+
+
+@dataclass(frozen=True, slots=True)
+class Digest:
+    since: datetime
+    total: int = 0
+    outgoing: int = 0
+    media: int = 0
+    deleted: int = 0
+    top_chats: Sequence[ChatRow] = ()
+    by_day: dict[str, int] = field(default_factory=dict)
+
+
+async def digest(session: AsyncSession, *, since: datetime, tz: ZoneInfo, now: datetime, top: int = 5) -> Digest:
+    """Berilgan vaqtdan beri qisqacha hisobot (``/digest``)."""
+    total = await session.scalar(select(func.count()).where(Message.date >= since))
+    outgoing = await session.scalar(select(func.count()).where(Message.date >= since, Message.is_outgoing.is_(True)))
+    media = await session.scalar(
+        select(func.count()).where(Message.date >= since, Message.media_type.is_not(None))
+    )
+    deleted = await session.scalar(
+        select(func.count()).where(Message.deleted_at >= since, Message.deletion_status.is_not(None))
+    )
+    period = (
+        select(Message.chat_id.label("chat_id"), func.count().label("n"), func.max(Message.date).label("last"))
+        .where(Message.date >= since)
+        .group_by(Message.chat_id)
+        .subquery()
+    )
+    top_rows = await session.execute(
+        select(Chat, period.c.n, period.c.last)
+        .join(period, period.c.chat_id == Chat.chat_id)
+        .order_by(period.c.n.desc())
+        .limit(top)
+    )
+    return Digest(
+        since=since,
+        total=int(total or 0),
+        outgoing=int(outgoing or 0),
+        media=int(media or 0),
+        deleted=int(deleted or 0),
+        top_chats=[ChatRow(c.chat_id, c.title, c.chat_type, c.archive_mode, int(n), d) for c, n, d in top_rows],
+        by_day=await activity_by_day(session, days=(now - since).days + 1, tz=tz, now=now),
     )

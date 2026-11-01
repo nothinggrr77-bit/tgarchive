@@ -68,7 +68,8 @@ Ikkinchi akkauntdan botga **`/start`** yuboring — menyu chiqadi va buyruqlar r
 | `/chats` | Arxivdagi chatlar; chatni bosing → **suhbatni Telegram'dagidek o‘qiysiz** (pastda) |
 | `/deleted` | O‘chirilganligi qayd etilgan xabarlar (o‘chirilish vaqti bo‘yicha) |
 | `/media` | Media statistikasi, turlar bo‘yicha ro‘yxat, **📦 Katta fayllar**; `/media nom` — fayl nomi bo‘yicha |
-| `/stats` | Arxiv statistikasi, eng faol chatlar, baza hajmi |
+| `/stats` | Arxiv statistikasi, 7 kunlik faollik, eng faol chatlar va yuboruvchilar |
+| `/digest [kun]` | Oxirgi N kun (sukut 7) hisoboti: xabarlar, media, eng faol chatlar |
 | `/status` | Archiver holati (real vaqt, import, media worker), disk, bot ishlash vaqti |
 | `/help` | Buyruqlar va qidiruv sintaksisi |
 | `/export` | Eksport (zip: HTML yoki JSON) — pastda |
@@ -126,6 +127,9 @@ matn...
 - **⬇️ Yuklab olish** — katta (yoki siyosat bo‘yicha yuklanmagan) faylni archiver navbatiga qo‘yadi (`audit_log` ga yoziladi). Himoyalangan va view-once media uchun tugma chiqmaydi.
 - **📃 To‘liq matn** — 3900 belgidan uzun xabar bo‘laklarga bo‘linib yuboriladi.
 - **📱 Telegramda ochish** — xabarni asl Telegram'da ochadi. Ommaviy username bo‘lsa `t.me/<username>/<id>`, maxfiy kanal/superguruhda `t.me/c/<id>/<id>` (faqat a'zolar). Shaxsiy chat va oddiy guruhda Telegram havola bermaydi, shuning uchun tugma chiqmaydi.
+- **🧵 Zanjir** — to‘liq reply-ipi: yuqorida asl xabarlargacha, o‘rtada shu xabar (▸), pastda unga yozilgan javoblar.
+- **🖼 Albomni ko‘rish** — xabar albom (bir nechta rasm/video) bo‘lsa, barcha fayllarini bitta ro‘yxatda ko‘rsatadi; **📎 Albomni olish** ularni Telegram albomi bo‘lib yuboradi.
+- **📖 Shu yerdan o‘qish** — suhbatni aynan shu xabar turgan joydan ochadi va uni ▸ bilan belgilaydi.
 
 ## Media (tez topish)
 

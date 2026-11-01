@@ -11,9 +11,20 @@ import asyncio
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import Command, CommandObject, CommandStart
-from aiogram.types import BotCommand, BotCommandScopeChat, CallbackQuery, FSInputFile, Message
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeChat,
+    CallbackQuery,
+    FSInputFile,
+    InputMediaAudio,
+    InputMediaDocument,
+    InputMediaPhoto,
+    InputMediaVideo,
+    Message,
+)
 
 from tgarchive.bot.callbacks import (
+    Album,
     ChatMessages,
     ChatsPage,
     Conversation,
@@ -24,8 +35,11 @@ from tgarchive.bot.callbacks import (
     Menu,
     OpenChat,
     OpenMessage,
+    ReadAround,
     SearchPage,
+    SendAlbum,
     SendFile,
+    Thread,
     Versions,
 )
 from tgarchive.bot.format import esc
@@ -45,6 +59,7 @@ COMMANDS = [
     BotCommand(command="deleted", description="O'chirilgan xabarlar"),
     BotCommand(command="media", description="Media va katta fayllar"),
     BotCommand(command="stats", description="Arxiv statistikasi"),
+    BotCommand(command="digest", description="Oxirgi 7 kun hisoboti"),
     BotCommand(command="status", description="Archiver, zaxira va server holati"),
     BotCommand(command="export", description="Eksport: chat yoki sana oralig'i"),
     BotCommand(command="audit", description="Audit jurnali"),
@@ -138,6 +153,13 @@ def build_router(views: Views) -> Router:
     async def on_stats(message: Message, bot: Bot) -> None:
         await send(bot, await views.stats())
 
+    @router.message(Command("digest"))
+    async def on_digest(message: Message, bot: Bot, command: CommandObject) -> None:
+        days = 7
+        if command.args and command.args.strip().isdigit():
+            days = max(1, min(90, int(command.args.strip())))
+        await send(bot, await views.digest_report(days))
+
     @router.message(Command("status"))
     async def on_status(message: Message, bot: Bot) -> None:
         await send(bot, await views.status())
@@ -227,6 +249,31 @@ def build_router(views: Views) -> Router:
         await send(bot, await views.versions(callback_data.pk))
         await callback.answer()
 
+    @router.callback_query(Thread.filter())
+    async def on_thread(callback: CallbackQuery, callback_data: Thread, bot: Bot) -> None:
+        await send(bot, await views.thread(callback_data.pk))
+        await callback.answer()
+
+    @router.callback_query(ReadAround.filter())
+    async def on_read_around(callback: CallbackQuery, callback_data: ReadAround, bot: Bot) -> None:
+        await send(bot, await views.read_around(callback_data.pk))
+        await callback.answer()
+
+    @router.callback_query(Album.filter())
+    async def on_album(callback: CallbackQuery, callback_data: Album, bot: Bot) -> None:
+        await send(bot, await views.album(callback_data.pk))
+        await callback.answer()
+
+    @router.callback_query(SendAlbum.filter())
+    async def on_send_album(callback: CallbackQuery, callback_data: SendAlbum, bot: Bot) -> None:
+        result = await views.album_files(callback_data.pk)
+        if isinstance(result, str):
+            await bot.send_message(owner, result)
+            await callback.answer()
+            return
+        await callback.answer("Yuborilyapti…")
+        await _send_album(bot, owner, result)
+
     @router.callback_query(SendFile.filter())
     async def on_send_file(callback: CallbackQuery, callback_data: SendFile, bot: Bot) -> None:
         result = await views.file_to_send(callback_data.media_id)
@@ -285,6 +332,46 @@ def build_router(views: Views) -> Router:
         await callback.answer("Bu tugma eskirgan.")
 
     return router
+
+
+_ALBUM_INPUT = {
+    MediaType.PHOTO: InputMediaPhoto,
+    MediaType.VIDEO: InputMediaVideo,
+    MediaType.DOCUMENT: InputMediaDocument,
+    MediaType.AUDIO: InputMediaAudio,
+}
+# Bitta albomda birga ketadigan turlar (Telegram sendMediaGroup qoidasi)
+_ALBUM_GROUPS = ((MediaType.PHOTO, MediaType.VIDEO), (MediaType.DOCUMENT,), (MediaType.AUDIO,))
+
+
+async def _send_album(bot: Bot, owner: int, items: list[FileToSend]) -> None:
+    """Albomni Telegram media-guruhi sifatida yuboradi; mos kelmaydigan turlar alohida.
+
+    Telegram albomi 2–10 ta rasm/video (yoki alohida hujjat / audio guruhi) bo'lishi mumkin;
+    animatsiya, ovozli, video xabar, stiker albomga sig'maydi — alohida yuboriladi.
+    """
+    caption = next((it.caption for it in items if it.caption), None)
+    if caption:
+        await bot.send_message(owner, caption)
+    leftover = list(items)
+    for kinds in _ALBUM_GROUPS:
+        group = [it for it in leftover if it.media_type in kinds]
+        leftover = [it for it in leftover if it.media_type not in kinds]
+        for start in range(0, len(group), 10):
+            chunk = group[start : start + 10]
+            if len(chunk) < 2:  # albom kamida 2 ta; bittasini oddiy yuboramiz
+                leftover.extend(chunk)
+                continue
+            media = [
+                _ALBUM_INPUT[it.media_type](media=FSInputFile(it.path, filename=it.file_name)) for it in chunk
+            ]
+            try:
+                await bot.send_media_group(owner, media=media)
+            except TelegramBadRequest as exc:
+                log.info("album_group_failed", reason=str(exc)[:200])
+                leftover.extend(chunk)
+    for it in leftover:  # qolganlari (bittalik yoki albomga sig'maydigan turlar)
+        await _send_file(bot, owner, FileToSend(it.path, it.media_type, "", it.file_name))
 
 
 async def _send_file(bot: Bot, owner: int, item: FileToSend) -> None:
