@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import OperationalError
 
 from factories import PRIVATE, add_chats, record
 from tgarchive.db.engine import Database
@@ -81,6 +82,62 @@ async def test_concurrent_writers_do_not_duplicate(db: Database) -> None:
     )
     async with db.read() as session:
         assert await session.scalar(select(func.count()).select_from(Message)) == 40
+
+
+def _locked() -> OperationalError:
+    return OperationalError("BEGIN IMMEDIATE", {}, sqlite3.OperationalError("database is locked"))
+
+
+async def _no_sleep(_delay: float) -> None:
+    return
+
+
+class _FlakySession:
+    """connection() bir necha marta "locked" tashlab, keyin muvaffaqiyatli bo'ladi."""
+
+    def __init__(self, fail_times: int) -> None:
+        self.fail_times = fail_times
+        self.attempts = 0
+        self.rollbacks = 0
+
+    async def connection(self, **_kwargs: object) -> object:
+        self.attempts += 1
+        if self.attempts <= self.fail_times:
+            raise _locked()
+        return object()
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
+
+
+async def test_begin_immediate_retries_until_lock_free(db: Database, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("tgarchive.db.engine.asyncio.sleep", _no_sleep)
+    session = _FlakySession(fail_times=2)
+    await db._begin_immediate(session)  # type: ignore[arg-type]
+    assert session.attempts == 3  # 2 marta band, 3-urinishda muvaffaqiyat
+    assert session.rollbacks == 2  # har muvaffaqiyatsiz urinishdan keyin tozalangan
+
+
+async def test_begin_immediate_gives_up_after_retries(db: Database, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("tgarchive.db.engine.asyncio.sleep", _no_sleep)
+    session = _FlakySession(fail_times=99)
+    with pytest.raises(OperationalError, match="locked"):
+        await db._begin_immediate(session)  # type: ignore[arg-type]
+    from tgarchive.db.engine import _WRITE_LOCK_RETRIES
+
+    assert session.attempts == _WRITE_LOCK_RETRIES  # chegaralangan urinishlar
+
+
+async def test_begin_immediate_does_not_retry_other_errors(db: Database) -> None:
+    class _Broken:
+        async def connection(self, **_kwargs: object) -> object:
+            raise OperationalError("BEGIN IMMEDIATE", {}, sqlite3.OperationalError("no such table"))
+
+        async def rollback(self) -> None:  # pragma: no cover - chaqirilmasligi kerak
+            raise AssertionError("boshqa xatoda rollback bo'lmasligi kerak")
+
+    with pytest.raises(OperationalError, match="no such table"):
+        await db._begin_immediate(_Broken())  # type: ignore[arg-type]
 
 
 async def test_deleting_chat_cascades_and_cleans_search_index(db: Database) -> None:

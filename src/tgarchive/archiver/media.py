@@ -241,6 +241,13 @@ class MediaWorker:
             await self.expire_downloads(now)
         jobs: list[_Job] = []
         scheduled: set[tuple[MediaType, int]] = set()
+        # Umumiy hajmni (butun media jadvali bo'yicha og'ir agregat) faqat kerak bo'lganda va
+        # YOZUV tranzaksiyasidan TASHQARIDA hisoblaymiz — aks holda yozish qulfi uzoq ushlanib,
+        # boshqa jarayon (bot) "database is locked" oladi.
+        stored = 0
+        if self.settings.media_max_total_gb:
+            async with self.db.read() as session:
+                stored = await self._stored_bytes(session)
         async with self.db.write() as session:
             rows = (
                 await session.execute(
@@ -277,7 +284,7 @@ class MediaWorker:
                             media.force_download,
                         )
                     )
-            jobs = self._within_disk_budget(jobs, {m.id: m for m, _, _ in rows}, await self._stored_bytes(session))
+            jobs = self._within_disk_budget(jobs, {m.id: m for m, _, _ in rows}, stored)
             for job in jobs:
                 row = next(m for m, _, _ in rows if m.id == job.media_pk)
                 row.status = MediaStatus.DOWNLOADING

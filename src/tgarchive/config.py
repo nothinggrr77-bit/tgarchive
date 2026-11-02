@@ -68,7 +68,7 @@ class BaseAppSettings(BaseSettings):
 
     log_level: LogLevel = "INFO"
     log_format: Literal["json", "console"] = "json"
-    db_busy_timeout_ms: int = Field(10_000, ge=100, le=600_000)
+    db_busy_timeout_ms: int = Field(15_000, ge=100, le=600_000)
     display_timezone: str = "Asia/Tashkent"
     retention_days: int | None = Field(None, ge=1)
     # Eksport fayllari (shaxsiy ma'lumot nusxasi) shuncha kundan keyin o'chiriladi

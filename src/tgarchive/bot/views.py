@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from tgarchive.bot.callbacks import (
     ChatMessages,
     Album,
@@ -855,6 +856,9 @@ class Views:
                 )
         except FetchRefused as exc:
             return str(exc)
+        except OperationalError:
+            # Baza shu lahzada band (archiver yozayotgan) — so'rov yozilmadi. Egaga aytamiz.
+            return "⏳ Baza hozir band. Bir oz kutib, «📥 Yuklab yuborish» ni qayta bosing."
         for _ in range(self.fetch_attempts):
             await self._sleep(self.fetch_interval)
             ready = await self._ready_file(media_id)

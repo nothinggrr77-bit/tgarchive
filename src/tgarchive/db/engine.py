@@ -5,7 +5,8 @@ Concurrency modeli (SQLite WAL):
 * Bir vaqtning o'zida ko'p o'quvchi va bitta yozuvchi bo'lishi mumkin.
 * ``write()`` tranzaksiyani ``BEGIN IMMEDIATE`` bilan ochadi: yozish qulfi boshida olinadi,
   shuning uchun "o'qib, keyin yozish" paytida ``SQLITE_BUSY_SNAPSHOT`` xatosi bo'lmaydi.
-  Boshqa jarayon (masalan, bot) yozayotgan bo'lsa, ``busy_timeout`` gacha kutiladi.
+  Boshqa jarayon (masalan, bot) yozayotgan bo'lsa, ``busy_timeout`` gacha kutiladi; u ham
+  o'tib ketsa, qulfni olish bir necha marta qayta urinadi (``_begin_immediate``).
 * Bitta jarayon ichida yozuvchilar ``asyncio.Lock`` bilan navbatga qo'yiladi.
 * ``read()`` oddiy (DEFERRED) tranzaksiya — yozuvchini to'smaydi.
 """
@@ -20,10 +21,22 @@ from typing import Any
 
 from sqlalchemy import event, text
 from sqlalchemy.engine import URL, make_url
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 _BEGIN_MODES = frozenset({"DEFERRED", "IMMEDIATE", "EXCLUSIVE"})
 _BEGIN_OPTION = "sqlite_begin"
+
+# Yozish qulfini olishda (BEGIN IMMEDIATE) boshqa jarayon uni busy_timeout'dan uzoqroq ushlab
+# tursa, SQLite "database is locked" qaytaradi. Bu holatda darhol yiqilmaymiz — bir necha marta
+# qayta urinamiz. Har urinish o'zi busy_timeout gacha kutadi, orasida kichik tanaffus bilan.
+_WRITE_LOCK_RETRIES = 4
+_WRITE_LOCK_BASE_DELAY_S = 0.2
+_WRITE_LOCK_MAX_DELAY_S = 2.0
+
+
+def _is_locked(exc: OperationalError) -> bool:
+    return "database is locked" in str(exc).lower() or "database is busy" in str(exc).lower()
 
 
 def _json_dumps(value: Any) -> str:
@@ -52,7 +65,7 @@ def _install_sqlite_hooks(engine: AsyncEngine, busy_timeout_ms: int) -> None:
 
 
 class Database:
-    def __init__(self, url: str | URL, *, busy_timeout_ms: int = 10_000, echo: bool = False) -> None:
+    def __init__(self, url: str | URL, *, busy_timeout_ms: int = 15_000, echo: bool = False) -> None:
         self.url = make_url(url)
         self.is_sqlite = self.url.get_backend_name() == "sqlite"
         self.engine = create_async_engine(self.url, echo=echo, json_serializer=_json_dumps)
@@ -67,12 +80,30 @@ class Database:
         async with self._sessions() as session:
             yield session
 
+    async def _begin_immediate(self, session: AsyncSession) -> None:
+        """BEGIN IMMEDIATE — qulf band bo'lsa qayta urinish bilan.
+
+        Qayta urinish FAQAT shu yerda (foydalanuvchi kodidan oldin) bo'ladi, shuning uchun
+        tranzaksiya tanasi hech qachon ikki marta ishga tushmaydi.
+        """
+        delay = _WRITE_LOCK_BASE_DELAY_S
+        for attempt in range(_WRITE_LOCK_RETRIES):
+            try:
+                await session.connection(execution_options={_BEGIN_OPTION: "IMMEDIATE"})
+                return
+            except OperationalError as exc:
+                if not _is_locked(exc) or attempt == _WRITE_LOCK_RETRIES - 1:
+                    raise
+                await session.rollback()  # muvaffaqiyatsiz BEGIN'dan keyin sessiyani tozalash
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, _WRITE_LOCK_MAX_DELAY_S)
+
     @asynccontextmanager
     async def write(self) -> AsyncIterator[AsyncSession]:
         """Yozish uchun sessiya: muvaffaqiyatli bo'lsa commit, xato bo'lsa rollback."""
         async with self._write_lock, self._sessions() as session:
             if self.is_sqlite:
-                await session.connection(execution_options={_BEGIN_OPTION: "IMMEDIATE"})
+                await self._begin_immediate(session)
             try:
                 yield session
                 await session.commit()
