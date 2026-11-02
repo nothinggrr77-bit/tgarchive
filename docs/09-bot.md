@@ -71,11 +71,24 @@ Ikkinchi akkauntdan botga **`/start`** yuboring — menyu chiqadi va buyruqlar r
 | `/stats` | Arxiv statistikasi, 7 kunlik faollik, eng faol chatlar va yuboruvchilar |
 | `/digest [kun]` | Oxirgi N kun (sukut 7) hisoboti: xabarlar, media, eng faol chatlar |
 | `/status` | Archiver holati (real vaqt, import, media worker), disk, bot ishlash vaqti |
+| `/sessions` | **Akkaunt qaysi qurilmalarda ochilgan** — online/oxirgi faollik, joylashuv, yangi kirishlar |
 | `/help` | Buyruqlar va qidiruv sintaksisi |
 | `/export` | Eksport (zip: HTML yoki JSON) — pastda |
 | `/audit` | Audit jurnali va o‘chirish hodisalari |
 
 Natijalar sahifalarga bo‘lingan (`BOT_PAGE_SIZE`, sukut 10): raqamli tugma → xabarni ochish, ◀️ ▶️ — sahifalar.
+
+## Qurilmalar / sessiyalar (`/sessions`)
+
+Arxivlanayotgan akkaunt qaysi qurilma va ilovalarda ochilganini ko‘rsatadi (Telegram'ning «Qurilmalar»
+ro‘yxati): har biri uchun qurilma va ilova nomi, joylashuv (shahar/mamlakat va IP), qachon kirilgani va
+**online yoki oxirgi faollik vaqti**. Joriy (archiver) sessiyasi **🤖** bilan, so‘nggi 24 soatda kirilgan
+yangi sessiya **🆕** bilan belgilanadi — begona kirishni shu orqali payqaysiz.
+
+Bot MTProto bilan ishlamaydi, shuning uchun ro‘yxatni **archiver** har sinxronda (`SYNC_INTERVAL_S`,
+sukut 10 daqiqa) Telegram'dan o‘qib bazaga yozadi; bot shu suratni ko‘rsatadi. Ko‘rinishning tepasida
+«ma'lumot X oldin yangilangan» yoziladi. Begona qurilmani ko‘rsangiz, uni Telegram ilovasidan
+(Sozlamalar → Qurilmalar) chiqarib tashlang.
 
 ## Suhbatni o‘qish (Telegram'dagidek)
 

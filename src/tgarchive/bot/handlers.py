@@ -61,6 +61,7 @@ COMMANDS = [
     BotCommand(command="stats", description="Arxiv statistikasi"),
     BotCommand(command="digest", description="Oxirgi 7 kun hisoboti"),
     BotCommand(command="status", description="Archiver, zaxira va server holati"),
+    BotCommand(command="sessions", description="Akkaunt qurilmalari va online holati"),
     BotCommand(command="export", description="Eksport: chat yoki sana oralig'i"),
     BotCommand(command="audit", description="Audit jurnali"),
     BotCommand(command="help", description="Yordam va qidiruv sintaksisi"),
@@ -165,6 +166,10 @@ def build_router(views: Views) -> Router:
     async def on_status(message: Message, bot: Bot) -> None:
         await send(bot, await views.status())
 
+    @router.message(Command("sessions"))
+    async def on_sessions(message: Message, bot: Bot) -> None:
+        await send(bot, await views.sessions())
+
     @router.message(Command("export"))
     async def on_export(message: Message, bot: Bot, command: CommandObject) -> None:
         if not command.args:
@@ -218,6 +223,7 @@ def build_router(views: Views) -> Router:
             "media": views.media_menu,
             "stats": views.stats,
             "status": views.status,
+            "sessions": views.sessions,
         }
         if callback_data.action == "help":
             await send(bot, views.help())

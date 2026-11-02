@@ -26,6 +26,30 @@ class FakeDialog:
     unread_count: int = 0
 
 
+@dataclass
+class FakeAuth:
+    """account.getAuthorizations natijasidagi bitta sessiya (kerakli maydonlar)."""
+
+    hash: int = 0
+    current: bool = False
+    official_app: bool = True
+    device_model: str = ""
+    platform: str = ""
+    system_version: str = ""
+    app_name: str = ""
+    app_version: str = ""
+    ip: str = ""
+    country: str = ""
+    region: str = ""
+    date_created: datetime | None = None
+    date_active: datetime | None = None
+
+
+@dataclass
+class FakeAuthorizations:
+    authorizations: list[Any]
+
+
 class FakeTelegram:
     def __init__(self) -> None:
         self.entities: dict[int, Any] = {}
@@ -41,6 +65,7 @@ class FakeTelegram:
         self.handlers: list[tuple[Any, Any]] = []
         self.files: dict[tuple[int, int], bytes] = {}  # (chat_id, message_id) -> fayl mazmuni
         self.on_connect: list[tuple[type, Any]] = []  # ulanishda yuboriladigan hodisalar (catch_up)
+        self.authorizations: list[Any] = []  # account.getAuthorizations natijasi
         self._errors: dict[str, list[tuple[int, BaseException]]] = defaultdict(list)
         self._counts: dict[str, int] = defaultdict(int)
 
@@ -173,6 +198,8 @@ class FakeTelegram:
             return types.messages.DiscussionMessage(
                 messages=[root], unread_count=0, chats=[chat_entity], users=[], max_id=None
             )
+        if isinstance(request, functions.account.GetAuthorizationsRequest):
+            return FakeAuthorizations(list(self.authorizations))
         raise NotImplementedError(type(request).__name__)
 
     def count(self, method: str, **match: Any) -> int:

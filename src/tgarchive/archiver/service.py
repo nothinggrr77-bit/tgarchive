@@ -30,6 +30,7 @@ from tgarchive.archiver.history import FATAL_ERRORS, TRANSIENT_ERRORS, HistoryIm
 from tgarchive.archiver.maintenance import Maintenance
 from tgarchive.archiver.media import MediaWorker
 from tgarchive.archiver.realtime import RealtimeArchiver, stop_consumer
+from tgarchive.archiver.sessions import snapshot_sessions
 from tgarchive.config import ArchiverSettings
 from tgarchive.db.engine import Database
 from tgarchive.db.meta import AccountMismatchError, bind_account
@@ -162,6 +163,9 @@ class ArchiverService:
                     planned = await sync_dialogs(client, db, self.settings)
                     if self.realtime is not None:
                         self.realtime.update_modes(planned)
+                    # Faol sessiyalar ("Qurilmalar") suratini yangilaymiz — bot /sessions'da ko'rsatadi.
+                    # snapshot_sessions o'z xatosini o'zi yutadi, aylanishni buzmaydi.
+                    await snapshot_sessions(client, db)
                     self.last_sync_at = self._clock()
                     next_sync = time.monotonic() + self.settings.sync_interval_s
                 self.state = "importing"

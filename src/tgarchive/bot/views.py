@@ -89,12 +89,14 @@ from tgarchive.db.search import (
     search_messages,
     top_senders,
 )
+from tgarchive.db.sessions import SessionInfo, SessionsSnapshot, load_sessions_snapshot
 from tgarchive.db.status import ARCHIVER, format_backup_meta, format_summary, get_heartbeat, import_summary
 from tgarchive.db.store import add_audit, get_replies, get_reply_chain, get_versions
 from tgarchive.db.types import utcnow
 from tgarchive.mediafiles import resolve_media_path
 
 BOT_UPLOAD_LIMIT = 50 * 1024 * 1024  # oddiy Bot API orqali yuboriladigan fayl chegarasi
+ONLINE_WINDOW_S = 300  # shu oraliqda faol bo'lgan sessiya "online" deb ko'rsatiladi
 DELETION_RESOLUTIONS = {
     "confirmed": "tasdiqlangan",
     "probable": "ehtimoliy",
@@ -192,6 +194,17 @@ def _nav(offset: int, size: int, has_next: bool, make) -> list[tuple[str, str]]:
     return buttons
 
 
+def _device_emoji(platform: str, device_model: str) -> str:
+    text = f"{platform} {device_model}".lower()
+    if any(k in text for k in ("iphone", "ipad", "android", "ios", "phone", "mobile", "tablet")):
+        return "📱"
+    if any(k in text for k in ("web", "chrome", "firefox", "safari", "edge", "brauzer", "browser")):
+        return "🌐"
+    if any(k in text for k in ("desktop", "windows", "macos", "mac os", "linux", "pc", "ubuntu")):
+        return "💻"
+    return "📟"
+
+
 def _keyboard(numbered: list[tuple[int, str]], nav: list[tuple[str, str]], extra: list[tuple[str, str]] = ()) -> InlineKeyboardMarkup | None:
     builder = InlineKeyboardBuilder()
     _number_buttons(builder, numbered)
@@ -249,10 +262,11 @@ class Views:
             ("📎 Media", "media"),
             ("📊 Statistika", "stats"),
             ("🩺 Holat", "status"),
+            ("📱 Qurilmalar", "sessions"),
             ("❓ Yordam", "help"),
         ):
             builder.button(text=text, callback_data=Menu(action=action).pack())
-        builder.adjust(2, 2, 2, 1)
+        builder.adjust(2, 2, 2, 2)
         return View(
             "<b>Telegram arxivi</b>\nQidirish uchun shunchaki matn yuboring yoki /search ishlating.",
             builder.as_markup(),
@@ -980,6 +994,71 @@ class Views:
         uptime = int((now - self.started_at).total_seconds())
         lines.append(f"Bot: ishlayapti {uptime // 3600} soat {uptime % 3600 // 60} daqiqa")
         return View(fit(lines))
+
+    # --------------------------------------------------- akkaunt sessiyalari
+
+    async def sessions(self) -> View:
+        """Akkaunt qaysi qurilma/sessiyalarda ochilgan — online/oxirgi faollik bilan."""
+        async with self.db.read() as session:
+            snap = await load_sessions_snapshot(session)
+        return View(fit(self._sessions_lines(snap, utcnow())))
+
+    def _is_online(self, s: SessionInfo, now: datetime) -> bool:
+        return s.date_active is not None and (now - s.date_active).total_seconds() < ONLINE_WINDOW_S
+
+    def _ago(self, value: datetime | None, now: datetime) -> str:
+        if value is None:
+            return "noma'lum"
+        secs = max(0.0, (now - value).total_seconds())
+        if secs < 60:
+            return "hozirgina"
+        if secs < 3600:
+            return f"{int(secs // 60)} daqiqa oldin"
+        if secs < 86400:
+            return f"{int(secs // 3600)} soat oldin"
+        if secs < 30 * 86400:
+            return f"{int(secs // 86400)} kun oldin"
+        return local_time(value, self.tz)
+
+    def _session_block(self, s: SessionInfo, now: datetime) -> str:
+        device = s.device_model or s.platform or "Noma'lum qurilma"
+        head = f"{_device_emoji(s.platform, s.device_model)} <b>{esc(device)}</b>"
+        if s.current:
+            head += " — 🤖 shu arxiv sessiyasi"
+        parts = [head]
+        app = " ".join(p for p in (s.app_name, s.app_version) if p)
+        if app:
+            parts.append(f"   {esc(app)}")
+        place = " · ".join(p for p in (", ".join(x for x in (s.region, s.country) if x), s.ip) if p)
+        if place:
+            parts.append(f"   📍 {esc(place)}")
+        active = "🟢 <b>online</b>" if self._is_online(s, now) else f"oxirgi faollik: {self._ago(s.date_active, now)}"
+        parts.append(f"   kirgan: {local_time(s.date_created, self.tz)} · {active}")
+        new = s.date_created is not None and (now - s.date_created).total_seconds() < 86400
+        if new and not s.current:
+            parts.append("   🆕 <b>yangi</b> — so'nggi 24 soatda kirilgan; siz emasmisiz, tekshiring")
+        return "\n".join(parts)
+
+    def _sessions_lines(self, snap: SessionsSnapshot, now: datetime) -> list[str]:
+        if not snap.sessions:
+            return [
+                "📱 <b>Akkaunt sessiyalari</b>",
+                "Hali o'qilmagan. Archiver keyingi sinxronda (bir necha daqiqada) yangilaydi — "
+                "biroz kutib, qayta oching.",
+            ]
+        ordered = sorted(
+            snap.sessions,
+            key=lambda s: (not s.current, -(s.date_active.timestamp() if s.date_active else 0.0)),
+        )
+        online = sum(1 for s in snap.sessions if self._is_online(s, now))
+        lines = [
+            f"📱 <b>Akkaunt sessiyalari</b> — {len(snap.sessions)} ta qurilma, {online} ta online",
+            f"<i>ma'lumot {self._ago(snap.taken_at, now)} yangilangan</i>",
+            "",
+        ]
+        lines += [self._session_block(s, now) for s in ordered]
+        lines.append("\nBegona qurilmani ko'rsangiz — Telegram → Sozlamalar → Qurilmalar orqali chiqaring.")
+        return lines
 
     async def audit(self) -> View:
         async with self.db.read() as session:
