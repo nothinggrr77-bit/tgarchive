@@ -218,8 +218,10 @@ class Views:
         settings: BotSettings,
         *,
         started_at: datetime | None = None,
-        fetch_attempts: int = 40,
+        fetch_attempts: int = 6,
         fetch_interval: float = 1.5,
+        fetch_bg_attempts: int = 120,
+        fetch_bg_interval: float = 2.5,
         sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         self.db = db
@@ -228,9 +230,12 @@ class Views:
         self.page_size = settings.bot_page_size
         self.queries = QueryStore()
         self.started_at = started_at or utcnow()
-        # Talab bo'yicha yuklash: so'rovdan keyin fayl tayyor bo'lguncha kutish (archiver yuklaydi)
+        # Talab bo'yicha yuklash: so'rovdan keyin fayl tayyor bo'lguncha kutish (archiver yuklaydi).
+        # Avval qisqa kutamiz (tez javob); tayyor bo'lmasa fonda uzoqroq kutib, o'zimiz yuboramiz.
         self.fetch_attempts = fetch_attempts
         self.fetch_interval = fetch_interval
+        self.fetch_bg_attempts = fetch_bg_attempts
+        self.fetch_bg_interval = fetch_bg_interval
         self._sleep = sleep or asyncio.sleep
 
     # ------------------------------------------------------------ menyu
@@ -811,6 +816,8 @@ class Views:
             return "Media topilmadi."
         if media.status is MediaStatus.UNAVAILABLE:
             return "Bu media Telegram'da endi mavjud emas."
+        if media.status is MediaStatus.FAILED:
+            return "Faylni yuklab bo'lmadi (Telegram xatosi). Keyinroq «📥 Yuklab yuborish» ni qayta bosing."
         if media.skip_reason in NEVER_DOWNLOADED:
             return "Himoyalangan yoki bir marta ko'riladigan media — yuklab bo'lmaydi."
         if media.status is not MediaStatus.DONE or not media.local_path:
@@ -838,11 +845,11 @@ class Views:
         result = await self._ready_file(media_id)
         return result if result is not None else "Fayl hali yuklanmagan."
 
-    async def fetch_and_send(self, media_id: int) -> FileToSend | str:
-        """Faylni (kerak bo'lsa) Telegram'dan yuklatib, tayyor bo'lgach yuboradi.
+    async def start_fetch(self, media_id: int) -> FileToSend | str | None:
+        """So'rovni yozadi (hali yozilmagan bo'lsa).
 
-        Talab bo'yicha rejimda fayl serverda yo'q: archiver'ga yuklashni so'raymiz va u
-        tayyorlaguncha (soniyalar) kutamiz. Juda katta fayl uchun kutish uzoqroq bo'lishi mumkin.
+        Qaytaradi: FileToSend — allaqachon tayyor; matn — yakuniy javob (rad/band/xato);
+        None — so'rov qabul qilindi, fayl hali tayyor emas (kutish kerak).
         """
         ready = await self._ready_file(media_id)
         if ready is not None:
@@ -859,11 +866,29 @@ class Views:
         except OperationalError:
             # Baza shu lahzada band (archiver yozayotgan) — so'rov yozilmadi. Egaga aytamiz.
             return "⏳ Baza hozir band. Bir oz kutib, «📥 Yuklab yuborish» ni qayta bosing."
-        for _ in range(self.fetch_attempts):
-            await self._sleep(self.fetch_interval)
+        return None
+
+    async def poll_file(self, media_id: int, attempts: int, interval: float) -> FileToSend | str | None:
+        """Fayl tayyor bo'lguncha ``attempts`` marta tekshiradi. None — hali tayyor emas."""
+        for _ in range(attempts):
+            await self._sleep(interval)
             ready = await self._ready_file(media_id)
             if ready is not None:
                 return ready
+        return None
+
+    async def fetch_and_send(self, media_id: int) -> FileToSend | str:
+        """Faylni (kerak bo'lsa) Telegram'dan yuklatib, qisqa kutishdan so'ng yuboradi.
+
+        Talab bo'yicha rejimda fayl serverda yo'q: archiver'ga yuklashni so'raymiz va u
+        tayyorlaguncha kutamiz. Uzoq kutish handler'da fon rejimida davom etadi.
+        """
+        started = await self.start_fetch(media_id)
+        if started is not None:
+            return started
+        result = await self.poll_file(media_id, self.fetch_attempts, self.fetch_interval)
+        if result is not None:
+            return result
         return "⏳ Hali yuklanmoqda. Bir oz kutib, xabarni qayta oching — tayyor bo'lsa «📎 Faylni olish» chiqadi."
 
     # ------------------------------------------------------- statistika

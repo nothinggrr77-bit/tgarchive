@@ -403,8 +403,10 @@ class BotHarness:
     def __init__(self, db: Database, cfg: BotSettings) -> None:
         self.session = RecordingSession()
         self.bot = Bot(TOKEN, session=self.session)
-        # Talab bo'yicha yuklash testda kutmasin: qisqa, bloklanmaydigan poll
-        self.dp = build_dispatcher(db, cfg, fetch_attempts=2, fetch_interval=0)
+        # Talab bo'yicha yuklash testda kutmasin: qisqa, bloklanmaydigan poll (fon ham)
+        self.dp = build_dispatcher(
+            db, cfg, fetch_attempts=2, fetch_interval=0, fetch_bg_attempts=2, fetch_bg_interval=0
+        )
 
     async def feed(self, update) -> None:
         await self.dp.feed_update(self.bot, update)
@@ -477,10 +479,10 @@ async def test_callbacks(harness: BotHarness, archive: Archive, db: Database) ->
     expired = harness.session.of(AnswerCallbackQuery)[-1]
     assert expired.show_alert is True and "eskirgan" in expired.text
 
-    # "Yuklab yuborish": fayl yo'q → so'rov qo'yiladi (force_download), poll tugaydi, "yuklanmoqda" xabari
+    # "Yuklab yuborish": fayl yo'q → so'rov qo'yiladi (force_download), "yuklanmoqda" xabari chiqadi
     await harness.feed(callback_update(FetchFile(media_id=archive.media[2]).pack()))
     assert harness.session.of(AnswerCallbackQuery)[-1].text.startswith("📥")
-    assert "yuklanmoqda" in harness.texts()[-1].lower()
+    assert any("yuklanmoqda" in t.lower() for t in harness.texts())
     async with db.read() as session:
         assert (await session.get(Media, archive.media[2])).force_download is True
 
@@ -498,6 +500,31 @@ async def test_send_file_and_fallback_to_document(harness: BotHarness, archive: 
     harness.session.failures[SendPhoto] = lambda m: TelegramBadRequest(method=m, message="Bad Request: PHOTO_INVALID")
     await harness.feed(callback_update(SendFile(media_id=archive.media[1]).pack()))
     assert len(harness.session.of(SendDocument)) == 1
+
+
+async def test_fetch_delivers_in_background_when_ready(harness: BotHarness, archive: Archive, db: Database) -> None:
+    media_id = archive.media[2]  # kino.zip — hali yuklanmagan (katta)
+    views = harness.dp["views"]
+    calls = {"n": 0}
+
+    async def finish(_seconds: float) -> None:
+        # Qisqa poll (2 urinish) o'tgach, fon pollining birinchi urinishida fayl tayyor bo'ladi
+        calls["n"] += 1
+        if calls["n"] == 3:
+            async with db.write() as session:
+                media = await session.get(Media, media_id)
+                rel = "7/x/kino.bin"
+                path = views.settings.paths.media / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"kino-data")
+                media.status, media.local_path, media.stored_size = MediaStatus.DONE, rel, 9
+
+    views._sleep = finish
+    await harness.feed(callback_update(FetchFile(media_id=media_id).pack()))
+    [doc] = harness.session.of(SendDocument)  # fon rejimida fayl o'zi yuborildi
+    assert doc.chat_id == OWNER
+    assert any("yuklanmoqda" in t.lower() for t in harness.texts())  # oldin "kutilmoqda" xabari
+    assert any("tayyor" in t.lower() for t in harness.texts())  # keyin "✅ Fayl tayyor"
 
 
 async def test_handler_error_is_reported_to_owner(harness: BotHarness, archive: Archive, monkeypatch: pytest.MonkeyPatch) -> None:

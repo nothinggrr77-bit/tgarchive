@@ -43,6 +43,7 @@ def build_dispatcher(
     dispatcher = Dispatcher()
     dispatcher.update.outer_middleware(OwnerOnlyMiddleware(settings.owner_id, db))
     views = Views(db, settings, started_at=started_at, **views_kwargs)
+    dispatcher["views"] = views  # testlar va introspeksiya uchun
     dispatcher.include_router(build_router(views))
 
     @dispatcher.errors()

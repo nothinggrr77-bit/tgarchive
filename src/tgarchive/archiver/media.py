@@ -265,7 +265,9 @@ class MediaWorker:
                         Media.status.in_([MediaStatus.PENDING, MediaStatus.MISSING]),
                         (Media.next_attempt_at.is_(None)) | (Media.next_attempt_at <= now),
                     )
-                    .order_by(Message.date.desc(), Media.id.desc())
+                    # Egasi so'ragan (force_download) fayllar navbat boshida — katta orqada
+                    # qolgan navbatda ham bir bosishda tez yuklanadi.
+                    .order_by(Media.force_download.desc(), Message.date.desc(), Media.id.desc())
                     .limit(BATCH)
                 )
             ).all()

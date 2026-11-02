@@ -88,6 +88,7 @@ def build_router(views: Views) -> Router:
     router = Router(name="tgarchive")
     owner = views.settings.owner_id
     export_lock = asyncio.Lock()
+    pending_fetches: set[int] = set()  # fonda kutilayotgan fayllar (bir faylga bitta kutuvchi)
 
     async def send(bot: Bot, view: View) -> None:
         await bot.send_message(owner, view.text, reply_markup=view.keyboard)
@@ -287,12 +288,43 @@ def build_router(views: Views) -> Router:
 
     @router.callback_query(FetchFile.filter())
     async def on_fetch(callback: CallbackQuery, callback_data: FetchFile, bot: Bot) -> None:
-        await callback.answer("📥 Yuklanmoqda…")
-        result = await views.fetch_and_send(callback_data.media_id)
-        if isinstance(result, FileToSend):
-            await _send_file(bot, owner, result)
-        else:
-            await bot.send_message(owner, result)
+        media_id = callback_data.media_id
+        await callback.answer("📥 So'rov yuborildi…")
+        if media_id in pending_fetches:
+            await bot.send_message(owner, "⏳ Bu fayl allaqachon navbatda — tayyor bo'lsa shu yerga o'zim yuboraman.")
+            return
+        started = await views.start_fetch(media_id)
+        if isinstance(started, FileToSend):
+            await _send_file(bot, owner, started)
+            return
+        if isinstance(started, str):
+            await bot.send_message(owner, started)
+            return
+        # So'rov qabul qilindi, fayl hali tayyor emas. Avval qisqa kutamiz (tez javob uchun):
+        quick = await views.poll_file(media_id, views.fetch_attempts, views.fetch_interval)
+        if isinstance(quick, FileToSend):
+            await _send_file(bot, owner, quick)
+            return
+        if isinstance(quick, str):
+            await bot.send_message(owner, quick)
+            return
+        # Hali tayyor emas — fonda kutamiz. aiogram handler'ni alohida task'da ishlatadi,
+        # shuning uchun bu boshqa yangilanishlarni to'smaydi. Tayyor bo'lgach o'zimiz yuboramiz.
+        pending_fetches.add(media_id)
+        try:
+            await bot.send_message(owner, "⏳ Fayl yuklanmoqda. Tayyor bo'lgach, shu yerga o'zim yuboraman.")
+            result = await views.poll_file(media_id, views.fetch_bg_attempts, views.fetch_bg_interval)
+            if isinstance(result, FileToSend):
+                await bot.send_message(owner, "✅ Fayl tayyor:")
+                await _send_file(bot, owner, result)
+            elif isinstance(result, str):
+                await bot.send_message(owner, result)
+            else:
+                await bot.send_message(
+                    owner, "⌛️ Fayl hali tayyor emas (katta yoki navbat uzun). Keyinroq «📥 Yuklab yuborish» ni qayta bosing."
+                )
+        finally:
+            pending_fetches.discard(media_id)
 
     @router.callback_query(ChatsPage.filter())
     async def on_chats_page(callback: CallbackQuery, callback_data: ChatsPage, bot: Bot) -> None:

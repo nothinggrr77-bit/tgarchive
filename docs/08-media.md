@@ -91,6 +91,9 @@ qaysi xabar) saqlaydi. Media `skipped(on_demand)` holatida turadi.
 
 - Botda xabardagi **📥 Yuklab yuborish** tugmasini bosganingizda: bot archiver'ga shu faylni yuklashni
   so‘raydi, archiver uni Telegram'dan tortib oladi (soniyalar), bot esa tayyor bo‘lishi bilan sizga yuboradi.
+  Egasi so‘ragan fayl navbat boshiga qo‘yiladi — katta navbat orqada qolgan bo‘lsa ham tez yuklanadi.
+  Agar fayl bir zumda tayyor bo‘lmasa, bot **«⏳ yuklanmoqda»** deb javob beradi va tayyor bo‘lgach **o‘zi
+  yuboradi** — xabarni qayta ochish shart emas. Bir faylga ikki marta bossangiz, bitta kutuvchi qoladi.
 - Yuklangan fayl **`MEDIA_ON_DEMAND_TTL_H`** (sukut 24 soat) dan keyin serverdan **o‘chiriladi**, metama'lumot
   qoladi. Qayta kerak bo‘lsa, yana bir bosishda qaytadan yuklanadi. `TTL=0` — o‘chirmay saqlaydi.
 
