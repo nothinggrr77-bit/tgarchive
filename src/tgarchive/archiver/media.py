@@ -93,14 +93,17 @@ def classify(media: Media, message: Message, chat: Chat, settings: ArchiverSetti
         return Decision(False, MediaSkipReason.PROTECTED, "himoyalangan kontent (noforwards)")
     if media.force_download:
         return Decision(True)
-    if settings.media_on_demand:
-        return Decision(False, MediaSkipReason.ON_DEMAND, "talab bo'yicha — faqat so'raganda yuklanadi")
     info = ChatInfo(chat.chat_id, chat.chat_type, chat.title, chat.username, chat.is_protected)
     allowed, why = media_decision(info, settings, chat.media_override)
     if not allowed:
         return Decision(False, MediaSkipReason.POLICY, why)
     if media.media_type not in settings.media_types:
         return Decision(False, MediaSkipReason.TYPE, f"{media.media_type.value} MEDIA_TYPES da yo'q")
+    # Shu yergacha yetgan media tur va siyosat bo'yicha YUKLANADIGAN media. Rejimga qaraymiz:
+    # talab bo'yicha rejimda uni avtomatik yuklamaymiz (stiker/kanal/boshqa yuklanmaydiganlar
+    # yuqorida o'z sababi bilan ajralib chiqdi — ular "navbatda" bo'lib qolmaydi).
+    if settings.media_on_demand:
+        return Decision(False, MediaSkipReason.ON_DEMAND, "talab bo'yicha — faqat so'raganda yuklanadi")
     limit = settings.media_max_file_mb * 1024 * 1024
     if media.expected_size is not None and media.expected_size > limit:
         return Decision(
@@ -114,6 +117,9 @@ def classify(media: Media, message: Message, chat: Chat, settings: ArchiverSetti
 def policy_fingerprint(settings: ArchiverSettings) -> str:
     return json.dumps(
         {
+            # rev: tasnif mantig'i o'zgarganda oshiriladi — shunda sozlama o'zgarmasa ham mavjud
+            # skipped qatorlar bir marta qayta ko'rib chiqiladi (2: on_demand endi tur/siyosatdan keyin).
+            "rev": 2,
             "enabled": settings.media_enabled,
             "types": sorted(settings.media_types),
             "max_mb": settings.media_max_file_mb,

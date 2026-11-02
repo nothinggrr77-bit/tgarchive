@@ -144,6 +144,12 @@ def test_on_demand_classify(tmp_path: Path) -> None:
     prot, pmsg, pchat = _objects()
     pmsg.noforwards = True
     assert classify(prot, pmsg, pchat, cfg).reason is MediaSkipReason.PROTECTED  # himoya baribir ustun
+    # Tur/siyosat bo'yicha yuklanmaydiganlar talab bo'yicha rejimda ham o'z sababini saqlaydi —
+    # "navbatda (talab bo'yicha)" bo'lib qolmaydi (masalan stiker MEDIA_TYPES da yo'q).
+    assert classify(*_objects(media_type=MediaType.STICKER), cfg).reason is MediaSkipReason.TYPE
+    chan_m, chan_msg, chan_chat = _objects()
+    chan_chat.chat_type = ChatType.CHANNEL
+    assert classify(chan_m, chan_msg, chan_chat, cfg).reason is MediaSkipReason.POLICY
 
 
 async def test_on_demand_expiry_frees_disk(db: Database, tmp_path: Path) -> None:

@@ -96,6 +96,9 @@ qaysi xabar) saqlaydi. Media `skipped(on_demand)` holatida turadi.
 
 Shunday qilib server disk faqat so‘nggi 24 soatda so‘ralgan fayllar hajmida bo‘ladi — to‘lib ketmaydi.
 Himoyalangan (noforwards) va bir marta ko‘riladigan media bu rejimda ham umuman yuklanmaydi.
+Tur (`MEDIA_TYPES` da yo‘q, masalan **stiker**) yoki siyosat (kanal media'si `MEDIA_IN_CHANNELS=false`)
+bo‘yicha yuklanmaydiganlar ham talab bo‘yicha rejimda o‘z sababi (`type` / `policy`) bilan chetda
+qoladi — ular «navbatda» bo‘lib ko‘rinmaydi.
 
 > Rejimni o‘zgartirsangiz (`true`↔`false`), oldin `skipped` bo‘lgan media keyingi ishga tushishda qayta
 > ko‘rib chiqiladi: `false` qilsangiz avtomatik yuklashga qaytadi.
