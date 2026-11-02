@@ -82,8 +82,11 @@ class LargePage(CallbackData, prefix="lp"):
 
 
 class MediaPage(CallbackData, prefix="md"):
-    """Media ro'yxati: chat_id=0 — barcha chatlar; kind="" — barcha turlar."""
+    """Media ro'yxati: chat_id=0 — barcha chatlar; kind="" — barcha turlar.
+
+    ``deleted=True`` — faqat o'chirilgan xabarlarga tegishli media."""
 
     chat_id: int = 0
     kind: str = ""
     offset: int = 0
+    deleted: bool = False

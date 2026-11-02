@@ -67,7 +67,7 @@ Ikkinchi akkauntdan botga **`/start`** yuboring — menyu chiqadi va buyruqlar r
 | `/recent` | So‘nggi xabarlar (barcha chatlar) |
 | `/chats` | Arxivdagi chatlar; chatni bosing → **suhbatni Telegram'dagidek o‘qiysiz** (pastda) |
 | `/deleted` | O‘chirilganligi qayd etilgan xabarlar (o‘chirilish vaqti bo‘yicha) |
-| `/media` | Media statistikasi, turlar bo‘yicha ro‘yxat, **📦 Katta fayllar**; `/media nom` — fayl nomi bo‘yicha |
+| `/media` | Media statistikasi, turlar bo‘yicha ro‘yxat, **📦 Katta fayllar**, **🗑 O‘chirilgan**; `/media nom` — fayl nomi bo‘yicha |
 | `/stats` | Arxiv statistikasi, 7 kunlik faollik, eng faol chatlar va yuboruvchilar |
 | `/digest [kun]` | Oxirgi N kun (sukut 7) hisoboti: xabarlar, media, eng faol chatlar |
 | `/status` | Archiver holati (real vaqt, import, media worker), disk, bot ishlash vaqti |
@@ -146,12 +146,12 @@ matn...
 
 ## Media (tez topish)
 
-`/media` → turni tanlang (🖼 rasm, 🎬 video, 📄 hujjat, 🎤 ovozli, 🎵 audio, ⏺ video xabar) yoki «📎 Hammasi».
+`/media` → turni tanlang (🖼 rasm, 🎬 video, 📄 hujjat, 🎤 ovozli, 🎵 audio, ⏺ video xabar), «📎 Hammasi», «📦 Katta fayllar» yoki «🗑 O‘chirilgan».
 Ro‘yxatda har bir fayl yonida:
 - **N 📎** — fayl **yuklangan**: bir bosishda darrov yuboradi;
 - **N ⓘ** — fayl hali yuklanmagan (katta yoki navbatda): xabar tafsilotiga o‘tadi, u yerdan «⬇️ Yuklab olish».
 
-O‘chirilgan xabarning mediasi ro‘yxatda **🗑** belgisi bilan ko‘rinadi (agar oldin yuklangan bo‘lsa).
+**🗑 O‘chirilgan** — xabari Telegram'da o‘chirilgan, lekin arxivda saqlanib qolgan fayllar; eng so‘nggi o‘chirilgani birinchi, har birida o‘chirilgan vaqti ko‘rsatiladi. Oldin yuklangan fayl shu yerdan ham 📎 bilan olinadi; faqat talab bo‘yicha turgan (yuklanmagan) fayl xabar o‘chirilgandan keyin Telegram'dan qayta olinmaydi. Oddiy ro‘yxatda o‘chirilgan xabarning mediasi **🗑** belgisi bilan aralash ko‘rinadi; har bir ro‘yxatda pastdagi almashtirgich **🗑 O‘chirilganlar ↔ 📎 Hamma media** o‘sha chat/tur doirasida ikkisini almashtiradi.
 Chatni o‘qiyotganda **📎 Media** tugmasi — faqat o‘sha chatning fayllari. Fayl nomi bo‘yicha: `/media hisobot`.
 
 ## Xavfsizlik

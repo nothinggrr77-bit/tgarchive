@@ -319,7 +319,7 @@ async def test_media_type_list_sends_file_in_one_tap(harness: BotHarness, archiv
     await harness.feed(text_update("/media"))
     menu = harness.session.of(SendMessage)[-1]
     open_photos = next(
-        b.callback_data for row in menu.reply_markup.inline_keyboard for b in row if b.callback_data == "md:0:photo:0"
+        b.callback_data for row in menu.reply_markup.inline_keyboard for b in row if b.callback_data == "md:0:photo:0:0"
     )
     await harness.feed(callback_update(open_photos))
     listing = harness.session.of(EditMessageText)[-1]
@@ -372,6 +372,37 @@ async def test_media_views_and_fetch(views: Views, archive: Archive, db: Databas
     # Chat bo'yicha media (Ali): rasm va hujjat bitta ro'yxatda
     in_chat = await views.media_browse(chat_id=7)
     assert "🖼 rasm" in in_chat.text and "📄 hujjat" in in_chat.text
+
+
+async def test_deleted_media_view(views: Views, archive: Archive, db: Database) -> None:
+    from tgarchive.bot.callbacks import MediaPage
+    from tgarchive.db.store import apply_deletions
+    from tl_objects import ALI_ID
+
+    # Media menyusida "🗑 O'chirilgan" tugmasi bor
+    menu = await views.media_menu()
+    assert MediaPage(deleted=True).pack() in callbacks(menu)
+
+    # Dastlab o'chirilgan mediali xabar yo'q (#6 o'chirilgan, lekin mediasiz)
+    empty = await views.media_browse(deleted=True)
+    assert "O'chirilgan media yo'q" in empty.text
+
+    # Rasm (#1, yuklangan) va kino.zip (#2, yuklanmagan) xabarlari o'chirilsin
+    async with db.write() as session:
+        await apply_deletions(session, [1, 2], chat_id=ALI_ID)
+
+    view = await views.media_browse(deleted=True)
+    assert "🗑 O'chirilgan media" in view.text and "kino.zip" in view.text
+    # Yuklab olingan fayl — xabari o'chirilgan bo'lsa ham 📎 bilan olinadi
+    assert SendFile(media_id=archive.media[1]).pack() in callbacks(view)
+    # Yuklanmagan katta fayl — ⓘ orqali xabarga
+    assert OpenMessage(pk=archive.pk[2]).pack() in callbacks(view)
+    # Shu ro'yxatdan "Hamma media" ga qaytish almashtirgichi
+    assert MediaPage(chat_id=0, kind="").pack() in callbacks(view)
+
+    # Oddiy (o'chirilmagan) media ro'yxatida almashtirgich o'chirilganlarga olib boradi
+    all_media = await views.media_browse()
+    assert MediaPage(deleted=True).pack() in callbacks(all_media)
 
 
 async def test_file_to_send(views: Views, archive: Archive, monkeypatch: pytest.MonkeyPatch) -> None:

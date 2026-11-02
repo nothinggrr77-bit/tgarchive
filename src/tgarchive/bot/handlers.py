@@ -365,7 +365,10 @@ def build_router(views: Views) -> Router:
     @router.callback_query(MediaPage.filter())
     async def on_media_page(callback: CallbackQuery, callback_data: MediaPage, bot: Bot) -> None:
         view = await views.media_browse(
-            chat_id=callback_data.chat_id, kind=callback_data.kind, offset=callback_data.offset
+            chat_id=callback_data.chat_id,
+            kind=callback_data.kind,
+            deleted=callback_data.deleted,
+            offset=callback_data.offset,
         )
         await edit(bot, callback, view)
         await callback.answer()

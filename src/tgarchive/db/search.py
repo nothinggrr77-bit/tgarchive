@@ -369,6 +369,7 @@ class MediaBrowseRow:
     status: MediaStatus
     media_id: int
     deletion_status: DeletionStatus | None
+    deleted_at: datetime | None
 
 
 async def list_media(
@@ -376,10 +377,15 @@ async def list_media(
     *,
     chat_id: int | None = None,
     media_type: MediaType | None = None,
+    deleted: bool = False,
     limit: int = 10,
     offset: int = 0,
 ) -> Page:
-    """Fayl ko'rinishidagi media, eng yangisi birinchi. ``/media`` ro'yxati uchun."""
+    """Fayl ko'rinishidagi media, eng yangisi birinchi. ``/media`` ro'yxati uchun.
+
+    ``deleted=True`` — faqat o'chirilgan deb belgilangan xabarlarning mediasi;
+    o'chirilgan vaqti bo'yicha (eng so'nggi birinchi) tartiblanadi.
+    """
     stmt = (
         select(Media, Message, Chat.title)
         .join(Message, Message.id == Media.message_pk)
@@ -390,7 +396,13 @@ async def list_media(
         stmt = stmt.where(Message.chat_id == chat_id)
     if media_type is not None:
         stmt = stmt.where(Media.media_type == media_type)
-    stmt = stmt.order_by(Message.date.desc(), Media.id.desc()).limit(limit + 1).offset(offset)
+    if deleted:
+        stmt = stmt.where(Message.deletion_status.is_not(None)).order_by(
+            Message.deleted_at.desc(), Media.id.desc()
+        )
+    else:
+        stmt = stmt.order_by(Message.date.desc(), Media.id.desc())
+    stmt = stmt.limit(limit + 1).offset(offset)
     rows = [
         MediaBrowseRow(
             pk=message.id,
@@ -404,6 +416,7 @@ async def list_media(
             status=media.status,
             media_id=media.id,
             deletion_status=message.deletion_status,
+            deleted_at=message.deleted_at,
         )
         for media, message, title in await session.execute(stmt)
     ]

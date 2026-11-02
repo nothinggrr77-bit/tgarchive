@@ -126,7 +126,7 @@ HELP = """<b>Buyruqlar</b>
 /recent — so'nggi xabarlar
 /chats — arxivdagi chatlar (chatni bosib, suhbatni Telegram'dagidek o'qiysiz)
 /deleted — o'chirilganligi qayd etilgan xabarlar
-/media — media: turlar bo'yicha, katta fayllar; /media <i>nom</i> — fayl nomi bo'yicha
+/media — media: turlar bo'yicha, katta fayllar, o'chirilganlar; /media <i>nom</i> — fayl nomi bo'yicha
 /stats — arxiv statistikasi (faollik, eng faol chatlar va yuboruvchilar)
 /digest — oxirgi 7 kun hisoboti (/digest 30 — 30 kun)
 /status — archiver, zaxira va server holati
@@ -725,42 +725,60 @@ class Views:
             summary = await media_summary(session)
         builder = InlineKeyboardBuilder()
         builder.button(text="📦 Katta fayllar", callback_data=LargePage(offset=0).pack())
+        builder.button(text="🗑 O'chirilgan", callback_data=MediaPage(deleted=True).pack())
         builder.button(text="📎 Hammasi", callback_data=MediaPage().pack())
         for kind in (MediaType.PHOTO, MediaType.VIDEO, MediaType.DOCUMENT, MediaType.VOICE, MediaType.AUDIO, MediaType.VIDEO_NOTE):
             builder.button(text=media_label(kind), callback_data=MediaPage(kind=kind.value).pack())
-        builder.adjust(2, 3, 3)
+        builder.adjust(3, 3, 3)
         text = (
             f"📎 <b>Media</b>\n{esc(format_media_summary(summary))}\n\n"
             "Turni tanlang — har bir fayl yonidagi 📎 tugmasi uni darrov yuboradi.\n"
+            "🗑 O'chirilgan — xabari o'chirilgan, lekin arxivda saqlanib qolgan fayllar.\n"
             "Fayl nomi bo'yicha: <code>/media nom</code>"
         )
         return View(text, builder.as_markup())
 
-    async def media_browse(self, *, chat_id: int = 0, kind: str = "", offset: int = 0) -> View:
-        """Media ro'yxati: har bir yuklangan fayl yonida 📎 — darrov yuboradi, aks holda ⓘ — tafsilot."""
+    async def media_browse(self, *, chat_id: int = 0, kind: str = "", deleted: bool = False, offset: int = 0) -> View:
+        """Media ro'yxati: har bir yuklangan fayl yonida 📎 — darrov yuboradi, aks holda ⓘ — tafsilot.
+
+        ``deleted=True`` — faqat xabari o'chirilgan media (arxivda fayl saqlanib qolgan).
+        """
         try:
             media_type = MediaType(kind) if kind else None
         except ValueError:
             return View("Noma'lum media turi.")
         cid = chat_id or None
         async with self.db.read() as session:
-            page = await list_media(session, chat_id=cid, media_type=media_type, limit=self.page_size, offset=offset)
+            page = await list_media(
+                session, chat_id=cid, media_type=media_type, deleted=deleted, limit=self.page_size, offset=offset
+            )
             chat = await session.get(Chat, cid) if cid is not None else None
-        label = media_label(media_type) if media_type else "📎 Media"
+        label = "🗑 O'chirilgan media" if deleted else (media_label(media_type) if media_type else "📎 Media")
         where = f" — {esc(chat_label(chat.title if chat else None, cid))}" if cid is not None else ""
         header = f"{label}{where}"
         if not page.rows:
-            return View(f"{header}\n\n" + ("Media topilmadi." if offset == 0 else "Boshqa media yo'q."))
+            empty = (
+                "O'chirilgan media yo'q — xabari o'chirilgan fayllar hali qayd etilmagan."
+                if deleted
+                else "Media topilmadi."
+            )
+            return View(f"{header}\n\n" + (empty if offset == 0 else "Boshqa media yo'q."))
         lines = [f"{header} — {offset + 1}–{offset + len(page.rows)}", ""]
         builder = InlineKeyboardBuilder()
         for index, row in enumerate(page.rows, start=offset + 1):
             name = row.file_name or MEDIA_NAMES.get(row.media_type, row.media_type.value)
-            mark = " 🗑" if row.deletion_status else ""
             chat_part = (
                 f" · <i>{esc(shorten(chat_label(row.chat_title, row.chat_id), 24))}</i>" if cid is None else ""
             )
+            if deleted:
+                # O'chirilganlar ro'yxatida — o'chirilgan vaqti ko'rsatiladi (belgisi ortiqcha)
+                when = f"🗑 {local_time(row.deleted_at or row.date, self.tz)}"
+                mark = ""
+            else:
+                when = local_time(row.date, self.tz)
+                mark = " 🗑" if row.deletion_status else ""
             lines.append(
-                f"<b>{index}.</b> {local_time(row.date, self.tz)} · {media_label(row.media_type)} · "
+                f"<b>{index}.</b> {when} · {media_label(row.media_type)} · "
                 f"{format_size(row.size)}{mark}\n    {esc(shorten(name, 48))}{chat_part}"
             )
             if row.status is MediaStatus.DONE:
@@ -772,14 +790,31 @@ class Views:
         for start in range(0, count, BUTTONS_PER_ROW):
             rows.append(min(BUTTONS_PER_ROW, count - start))
         nav = _nav(
-            offset, self.page_size, page.has_next, lambda o: MediaPage(chat_id=chat_id, kind=kind, offset=o).pack()
+            offset,
+            self.page_size,
+            page.has_next,
+            lambda o: MediaPage(chat_id=chat_id, kind=kind, deleted=deleted, offset=o).pack(),
         )
         for text_, data in nav:
             builder.button(text=text_, callback_data=data)
         if nav:
             rows.append(len(nav))
+        # Shu kontekst (chat/tur) ichida o'chirilganlar ↔ hammasi almashtirgichi
+        if deleted:
+            builder.button(text="📎 Hamma media", callback_data=MediaPage(chat_id=chat_id, kind=kind).pack())
+        else:
+            builder.button(
+                text="🗑 O'chirilganlar", callback_data=MediaPage(chat_id=chat_id, kind=kind, deleted=True).pack()
+            )
+        rows.append(1)
         builder.adjust(*rows)
-        lines.append("\n📎 — faylni darrov yuboradi · ⓘ — tafsilot (yuklanmagan faylni olish ham shu yerda).")
+        if deleted:
+            lines.append(
+                "\n🗑 — xabari Telegram'da o'chirilgan; fayl arxivda qolgan bo'lsa 📎 bilan olasiz."
+                " 📎 — darrov yuboradi · ⓘ — tafsilot."
+            )
+        else:
+            lines.append("\n📎 — faylni darrov yuboradi · ⓘ — tafsilot (yuklanmagan faylni olish ham shu yerda).")
         return View(fit(lines), builder.as_markup())
 
     async def media_by_name(self, name: str) -> View:
