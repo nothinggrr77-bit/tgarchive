@@ -6,9 +6,11 @@ alohida testlanadi. Har bir matn ``SAFE_LIMIT`` (≈3900 belgi) dan oshmaydi.
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 import shutil
 from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -58,11 +60,13 @@ from tgarchive.bot.format import (
 )
 from tgarchive.config import BotSettings
 from tgarchive.db.engine import Database
-from tgarchive.db.enums import REVIEWABLE_SKIPS, MediaSkipReason, MediaStatus, MediaType
+from tgarchive.db.enums import MediaSkipReason, MediaStatus, MediaType
 from tgarchive.db.media import (
+    NEVER_DOWNLOADED,
     FetchRefused,
     format_media_summary,
     format_size,
+    is_fetchable,
     list_large_files,
     media_summary,
     request_fetch,
@@ -207,13 +211,26 @@ def _keyboard(numbered: list[tuple[int, str]], nav: list[tuple[str, str]], extra
 
 
 class Views:
-    def __init__(self, db: Database, settings: BotSettings, *, started_at: datetime | None = None) -> None:
+    def __init__(
+        self,
+        db: Database,
+        settings: BotSettings,
+        *,
+        started_at: datetime | None = None,
+        fetch_attempts: int = 40,
+        fetch_interval: float = 1.5,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
+    ) -> None:
         self.db = db
         self.settings = settings
         self.tz = ZoneInfo(settings.display_timezone)
         self.page_size = settings.bot_page_size
         self.queries = QueryStore()
         self.started_at = started_at or utcnow()
+        # Talab bo'yicha yuklash: so'rovdan keyin fayl tayyor bo'lguncha kutish (archiver yuklaydi)
+        self.fetch_attempts = fetch_attempts
+        self.fetch_interval = fetch_interval
+        self._sleep = sleep or asyncio.sleep
 
     # ------------------------------------------------------------ menyu
 
@@ -344,10 +361,8 @@ class Views:
         media = detail.media
         if media is not None and media.status is MediaStatus.DONE:
             builder.button(text="📎 Faylni olish", callback_data=SendFile(media_id=media.id).pack())
-        elif media is not None and not media.force_download and (
-            media.skip_reason in REVIEWABLE_SKIPS or media.status is MediaStatus.FAILED
-        ):
-            builder.button(text="⬇️ Yuklab olish", callback_data=FetchFile(media_id=media.id).pack())
+        elif media is not None and is_fetchable(media):
+            builder.button(text="📥 Yuklab yuborish", callback_data=FetchFile(media_id=media.id).pack())
         if m.grouped_id:
             builder.button(text="🖼 Albomni ko'rish", callback_data=Album(pk=pk).pack())
         if detail.parent is not None or detail.reply_count:
@@ -380,6 +395,8 @@ class Views:
         label = media_label(media.media_type)
         if media.status is MediaStatus.DONE:
             state = "yuklangan"
+        elif media.skip_reason is MediaSkipReason.ON_DEMAND:
+            state = "serverda yo'q — «📥 Yuklab yuborish» bosing"
         elif media.skip_reason is MediaSkipReason.TOO_LARGE:
             state = "<b>katta fayl</b>, yuklanmagan"
         elif media.status is MediaStatus.SKIPPED:
@@ -784,18 +801,25 @@ class Views:
             return str(exc)
         return "Navbatga qo'yildi. Archiver yuklab bo'lgach, xabardagi «📎 Faylni olish» tugmasi chiqadi."
 
-    async def file_to_send(self, media_id: int) -> FileToSend | str:
+    async def _ready_file(self, media_id: int) -> FileToSend | str | None:
+        """FileToSend — tayyor; matn — yuborib bo'lmaydi (yakuniy); None — hali tayyor emas (kutish)."""
         async with self.db.read() as session:
             media = await session.get(Media, media_id)
             message = await session.get(Message, media.message_pk) if media else None
-        if media is None or message is None or media.status is not MediaStatus.DONE or not media.local_path:
-            return "Fayl hali yuklanmagan."
+        if media is None or message is None:
+            return "Media topilmadi."
+        if media.status is MediaStatus.UNAVAILABLE:
+            return "Bu media Telegram'da endi mavjud emas."
+        if media.skip_reason in NEVER_DOWNLOADED:
+            return "Himoyalangan yoki bir marta ko'riladigan media — yuklab bo'lmaydi."
+        if media.status is not MediaStatus.DONE or not media.local_path:
+            return None  # hali yuklanmagan — kutamiz
         try:
             path = resolve_media_path(self.settings.paths.media, media.local_path)
         except ValueError:
             return "Fayl yo'li noto'g'ri."
         if not path.is_file():
-            return "Fayl diskda topilmadi — archiver uni qayta yuklaydi (tgarchive media verify)."
+            return None  # DONE deyilgan, lekin fayl yo'q — archiver qayta yuklaydi
         size = path.stat().st_size
         if size > BOT_UPLOAD_LIMIT:
             return (
@@ -808,6 +832,35 @@ class Views:
             )
         caption = esc(shorten(message.text, 900)) if message.text else ""
         return FileToSend(path, media.media_type, caption, media.file_name)
+
+    async def file_to_send(self, media_id: int) -> FileToSend | str:
+        result = await self._ready_file(media_id)
+        return result if result is not None else "Fayl hali yuklanmagan."
+
+    async def fetch_and_send(self, media_id: int) -> FileToSend | str:
+        """Faylni (kerak bo'lsa) Telegram'dan yuklatib, tayyor bo'lgach yuboradi.
+
+        Talab bo'yicha rejimda fayl serverda yo'q: archiver'ga yuklashni so'raymiz va u
+        tayyorlaguncha (soniyalar) kutamiz. Juda katta fayl uchun kutish uzoqroq bo'lishi mumkin.
+        """
+        ready = await self._ready_file(media_id)
+        if ready is not None:
+            return ready
+        try:
+            async with self.db.write() as session:
+                media = await request_fetch(session, media_id)
+                await add_audit(
+                    session, "media_fetch_requested", actor="owner", actor_id=self.settings.owner_id,
+                    target=f"media:{media.id}",
+                )
+        except FetchRefused as exc:
+            return str(exc)
+        for _ in range(self.fetch_attempts):
+            await self._sleep(self.fetch_interval)
+            ready = await self._ready_file(media_id)
+            if ready is not None:
+                return ready
+        return "⏳ Hali yuklanmoqda. Bir oz kutib, xabarni qayta oching — tayyor bo'lsa «📎 Faylni olish» chiqadi."
 
     # ------------------------------------------------------- statistika
 

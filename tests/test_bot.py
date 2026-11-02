@@ -38,7 +38,7 @@ from tgarchive.bot.callbacks import (
 )
 from tgarchive.bot.format import MESSAGE_LIMIT, escape_within, split_text, telegram_link
 from tgarchive.bot.views import Views
-from tgarchive.db.enums import ChatType
+from tgarchive.db.enums import ChatType, MediaStatus
 from tgarchive.db.search import SearchQuery, search_messages
 from tl_objects import CHANNEL_ID
 from tgarchive.cli import main
@@ -222,6 +222,39 @@ async def test_digest_handles_old_archive(views: Views, archive: Archive) -> Non
     assert "🗞 <b>Hisobot" in view.text and "yangi xabar yo'q" in view.text
 
 
+async def test_fetch_and_send_waits_then_sends(views: Views, archive: Archive, db: Database) -> None:
+    media_id = archive.media[2]  # kino.zip — yuklanmagan (katta)
+
+    async def finish_during_poll(_seconds: float) -> None:
+        async with db.write() as session:
+            media = await session.get(Media, media_id)
+            if media.status is not MediaStatus.DONE:
+                rel = "7/x/kino.bin"
+                path = views.settings.paths.media / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"albom-video")
+                media.status, media.local_path, media.stored_size = MediaStatus.DONE, rel, 11
+
+    views._sleep = finish_during_poll
+    views.fetch_attempts, views.fetch_interval = 3, 0
+    result = await views.fetch_and_send(media_id)
+    assert not isinstance(result, str) and result.path.read_bytes() == b"albom-video"
+    async with db.read() as session:
+        assert (await session.get(Media, media_id)).force_download is True  # so'rov qo'yilgan
+
+
+async def test_fetch_and_send_already_downloaded_is_instant(views: Views, archive: Archive) -> None:
+    sent = 0
+
+    async def no_wait(_seconds: float) -> None:
+        nonlocal sent
+        sent += 1
+
+    views._sleep = no_wait
+    result = await views.fetch_and_send(archive.media[1])  # rasm allaqachon yuklangan
+    assert not isinstance(result, str) and sent == 0  # kutmasdan darrov
+
+
 async def test_stats_shows_activity_and_senders(views: Views, archive: Archive) -> None:
     view = await views.stats()
     assert "Oxirgi 7 kun" in view.text and "Eng faol yuboruvchilar" in view.text
@@ -370,7 +403,8 @@ class BotHarness:
     def __init__(self, db: Database, cfg: BotSettings) -> None:
         self.session = RecordingSession()
         self.bot = Bot(TOKEN, session=self.session)
-        self.dp = build_dispatcher(db, cfg)
+        # Talab bo'yicha yuklash testda kutmasin: qisqa, bloklanmaydigan poll
+        self.dp = build_dispatcher(db, cfg, fetch_attempts=2, fetch_interval=0)
 
     async def feed(self, update) -> None:
         await self.dp.feed_update(self.bot, update)
@@ -443,9 +477,10 @@ async def test_callbacks(harness: BotHarness, archive: Archive, db: Database) ->
     expired = harness.session.of(AnswerCallbackQuery)[-1]
     assert expired.show_alert is True and "eskirgan" in expired.text
 
+    # "Yuklab yuborish": fayl yo'q → so'rov qo'yiladi (force_download), poll tugaydi, "yuklanmoqda" xabari
     await harness.feed(callback_update(FetchFile(media_id=archive.media[2]).pack()))
-    fetched = harness.session.of(AnswerCallbackQuery)[-1]
-    assert fetched.show_alert is True and fetched.text.startswith("Navbatga qo'yildi")
+    assert harness.session.of(AnswerCallbackQuery)[-1].text.startswith("📥")
+    assert "yuklanmoqda" in harness.texts()[-1].lower()
     async with db.read() as session:
         assert (await session.get(Media, archive.media[2])).force_download is True
 

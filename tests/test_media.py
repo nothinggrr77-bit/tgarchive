@@ -135,6 +135,40 @@ def test_classify_rules(tmp_path: Path) -> None:
     assert reason(*_objects(size=60 * MB, media_type=MediaType.STICKER, force_download=True)) is None
 
 
+def test_on_demand_classify(tmp_path: Path) -> None:
+    cfg = settings(tmp_path, media_on_demand=True)
+    m, msg, chat = _objects()
+    assert classify(m, msg, chat, cfg).reason is MediaSkipReason.ON_DEMAND  # avtomatik yuklanmaydi
+    forced, fmsg, fchat = _objects(force_download=True)
+    assert classify(forced, fmsg, fchat, cfg).download is True  # egasi so'ragan — yuklanadi
+    prot, pmsg, pchat = _objects()
+    pmsg.noforwards = True
+    assert classify(prot, pmsg, pchat, cfg).reason is MediaSkipReason.PROTECTED  # himoya baribir ustun
+
+
+async def test_on_demand_expiry_frees_disk(db: Database, tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    tg = FakeTelegram()
+    standard_chat(tg)
+    cfg = settings(tmp_path)
+    await archive(tmp_path, db, tg, cfg)
+    await worker(tg, db, cfg).run_once()  # rasm (msg 1) yuklanadi
+    media = await rows(db)
+    path = resolve_media_path(cfg.paths.media, media[1].local_path)
+    assert path.exists() and media[1].status is MediaStatus.DONE
+
+    clock = FakeClock()
+    async with db.write() as s:
+        (await s.get(Media, media[1].id)).downloaded_at = clock.now - timedelta(hours=48)
+    on_demand = settings(tmp_path, media_on_demand=True, media_on_demand_ttl_h=24)
+    assert await worker(tg, db, on_demand, clock=clock).expire_downloads(clock.now) == 1
+
+    media = await rows(db)
+    assert media[1].status is MediaStatus.SKIPPED and media[1].skip_reason is MediaSkipReason.ON_DEMAND
+    assert media[1].local_path is None and not path.exists()  # fayl o'chdi, metama'lumot qoldi
+
+
 def test_extensions_and_paths_cannot_escape(tmp_path: Path) -> None:
     def ext(media_type: MediaType, name: str | None = None, mime: str | None = None) -> str:
         return media_extension(Media(media_type=media_type, file_name=name, mime_type=mime))

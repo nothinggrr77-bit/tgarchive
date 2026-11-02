@@ -95,9 +95,10 @@ class MediaSkipReason(StrEnum):
     POLICY = "policy"  # MEDIA_ENABLED / MEDIA_IN_CHANNELS / egasining chat bo'yicha qarori
     PROTECTED = "protected"  # himoyalangan kontent (noforwards) — hech qachon yuklanmaydi
     VIEW_ONCE = "view_once"  # bir marta ko'riladigan media (ttl) — hech qachon yuklanmaydi
+    ON_DEMAND = "on_demand"  # MEDIA_ON_DEMAND: faqat egasi so'raganda yuklanadi (serverni to'ldirmaslik uchun)
 
 
-# Sozlama o'zgarsa qayta ko'rib chiqiladigan sabablar (himoyalangan va view-once — hech qachon)
+# Sozlama o'zgarsa qayta ko'rib chiqiladigan sabablar (himoyalangan, view-once, on-demand — avtomatik emas)
 REVIEWABLE_SKIPS = frozenset({MediaSkipReason.TOO_LARGE, MediaSkipReason.TYPE, MediaSkipReason.POLICY})
 
 

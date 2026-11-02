@@ -56,8 +56,12 @@ from tgarchive.policy import media_decision
 log = get_logger(__name__)
 
 BATCH = 20
-IDLE_S = 30.0
+IDLE_S = 8.0  # bo'sh turganda tekshirish oralig'i (egasi "olish" bosganda tez javob berish uchun qisqa)
 PAUSE_S = 600.0
+EXPIRE_EVERY_S = 600.0  # talab bo'yicha yuklangan fayllar muddatini necha sekundda bir tekshirish
+EXPIRE_BATCH = 200
+# Sozlama o'zgarganda qayta ko'riladigan sabablar (on-demand o'chirilsa — avtomatik yuklashga qaytsin)
+_REQUEUE_ON_POLICY_CHANGE = sorted(REVIEWABLE_SKIPS | {MediaSkipReason.ON_DEMAND})
 RETRY_S = (60, 300, 1800, 7200, 43200)
 TRANSIENT_RETRY_S = 60
 VERIFY_CHUNK = 500
@@ -89,6 +93,8 @@ def classify(media: Media, message: Message, chat: Chat, settings: ArchiverSetti
         return Decision(False, MediaSkipReason.PROTECTED, "himoyalangan kontent (noforwards)")
     if media.force_download:
         return Decision(True)
+    if settings.media_on_demand:
+        return Decision(False, MediaSkipReason.ON_DEMAND, "talab bo'yicha — faqat so'raganda yuklanadi")
     info = ChatInfo(chat.chat_id, chat.chat_type, chat.title, chat.username, chat.is_protected)
     allowed, why = media_decision(info, settings, chat.media_override)
     if not allowed:
@@ -112,6 +118,7 @@ def policy_fingerprint(settings: ArchiverSettings) -> str:
             "types": sorted(settings.media_types),
             "max_mb": settings.media_max_file_mb,
             "channels": settings.media_in_channels,
+            "on_demand": settings.media_on_demand,
         },
         sort_keys=True,
     )
@@ -161,6 +168,7 @@ class MediaWorker:
         self.paused: str | None = None
         self.current: dict[str, Any] = {}
         self.stats: Counter[str] = Counter()
+        self._next_expire: datetime | None = None
 
     # ------------------------------------------------------------ aylanish
 
@@ -211,7 +219,7 @@ class MediaWorker:
             if await get_meta(session, POLICY_META_KEY) != fingerprint:
                 result = await session.execute(
                     update(Media)
-                    .where(Media.status == MediaStatus.SKIPPED, Media.skip_reason.in_(sorted(REVIEWABLE_SKIPS)))
+                    .where(Media.status == MediaStatus.SKIPPED, Media.skip_reason.in_(_REQUEUE_ON_POLICY_CHANGE))
                     .values(status=MediaStatus.PENDING, skip_reason=None, status_note=None, updated_at=now)
                 )
                 await set_meta(session, POLICY_META_KEY, fingerprint)
@@ -228,6 +236,9 @@ class MediaWorker:
         ensure_private_dir(self.tmp)
         await self.empty_trash()
         now = self._clock()
+        if self._next_expire is None or now >= self._next_expire:
+            self._next_expire = now + timedelta(seconds=EXPIRE_EVERY_S)
+            await self.expire_downloads(now)
         jobs: list[_Job] = []
         scheduled: set[tuple[MediaType, int]] = set()
         async with self.db.write() as session:
@@ -547,6 +558,52 @@ class MediaWorker:
         if removed:
             log.info("media_trash_emptied", removed=removed)
         return removed
+
+    async def expire_downloads(self, now: datetime) -> int:
+        """Talab bo'yicha rejimda: muddati o'tgan yuklangan fayllarni o'chirib, diskni bo'shatadi.
+
+        Fayl o'chiriladi, metama'lumot qoladi va qayta ``on_demand`` bo'ladi — egasi keyin yana so'rasa
+        qaytadan yuklab beriladi. Shunday qilib server disk ``MEDIA_ON_DEMAND_TTL_H`` oynasidan oshmaydi.
+        """
+        if not self.settings.media_on_demand or self.settings.media_on_demand_ttl_h <= 0:
+            return 0
+        cutoff = now - timedelta(hours=self.settings.media_on_demand_ttl_h)
+        removed = 0
+        async with self.db.write() as session:
+            rows = list(
+                await session.scalars(
+                    select(Media)
+                    .where(
+                        Media.status == MediaStatus.DONE,
+                        Media.downloaded_at.is_not(None),
+                        Media.downloaded_at < cutoff,
+                    )
+                    .limit(EXPIRE_BATCH)
+                )
+            )
+            paths = {m.local_path for m in rows if m.local_path}
+            for media in rows:
+                media.status = MediaStatus.SKIPPED
+                media.skip_reason = MediaSkipReason.ON_DEMAND
+                media.status_note = "talab bo'yicha, muddati o'tgach o'chirildi"
+                media.local_path = None
+                media.stored_size = None
+                media.sha256 = None
+                media.force_download = False
+                media.downloaded_at = None
+                media.updated_at = now
+            await session.flush()
+            for path in paths:
+                still = await session.scalar(
+                    select(Media.id).where(Media.local_path == path, Media.status == MediaStatus.DONE).limit(1)
+                )
+                if still is None:
+                    with suppress(ValueError, OSError):
+                        resolve_media_path(self.root, path).unlink(missing_ok=True)
+                        removed += 1
+        if rows:
+            log.info("media_on_demand_expired", reset=len(rows), files_removed=removed)
+        return len(rows)
 
     def details(self) -> dict[str, Any]:
         return {"state": self.state, "paused": self.paused, "current": self.current, "stats": dict(self.stats)}

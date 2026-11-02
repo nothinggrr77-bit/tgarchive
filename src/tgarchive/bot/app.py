@@ -37,10 +37,12 @@ BOT_HEARTBEAT_S = 30
 SCHEMA_WAIT_S = 10.0
 
 
-def build_dispatcher(db: Database, settings: BotSettings, *, started_at: datetime | None = None) -> Dispatcher:
+def build_dispatcher(
+    db: Database, settings: BotSettings, *, started_at: datetime | None = None, **views_kwargs: Any
+) -> Dispatcher:
     dispatcher = Dispatcher()
     dispatcher.update.outer_middleware(OwnerOnlyMiddleware(settings.owner_id, db))
-    views = Views(db, settings, started_at=started_at)
+    views = Views(db, settings, started_at=started_at, **views_kwargs)
     dispatcher.include_router(build_router(views))
 
     @dispatcher.errors()

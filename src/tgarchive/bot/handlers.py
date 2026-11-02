@@ -286,8 +286,13 @@ def build_router(views: Views) -> Router:
         await callback.answer()
 
     @router.callback_query(FetchFile.filter())
-    async def on_fetch(callback: CallbackQuery, callback_data: FetchFile) -> None:
-        await callback.answer(await views.fetch(callback_data.media_id), show_alert=True)
+    async def on_fetch(callback: CallbackQuery, callback_data: FetchFile, bot: Bot) -> None:
+        await callback.answer("📥 Yuklanmoqda…")
+        result = await views.fetch_and_send(callback_data.media_id)
+        if isinstance(result, FileToSend):
+            await _send_file(bot, owner, result)
+        else:
+            await bot.send_message(owner, result)
 
     @router.callback_query(ChatsPage.filter())
     async def on_chats_page(callback: CallbackQuery, callback_data: ChatsPage, bot: Bot) -> None:

@@ -83,10 +83,29 @@ tarix importi / real vaqt ──> media qatori: pending
 - **RAM:** fayl xotirada to‘planmaydi (Telethon diskka bo‘laklab yozadi, sha256 1 MB bo‘laklar bilan), bir vaqtda ko‘pi bilan `MEDIA_CONCURRENCY` (2) ta yuklash.
 - **Bir martalik `tgarchive import`** fayl yuklamaydi — bu faqat doimiy xizmatning (`run`) ishi.
 
+## Talab bo‘yicha rejim (`MEDIA_ON_DEMAND`)
+
+Kichik diskli serverlar uchun tavsiya etiladi. `MEDIA_ON_DEMAND=true` bo‘lsa, archiver mediani
+**avtomatik yuklamaydi** — ularni Telegram'da qoldiradi va faqat metama'lumotini (nom, hajm, turi,
+qaysi xabar) saqlaydi. Media `skipped(on_demand)` holatida turadi.
+
+- Botda xabardagi **📥 Yuklab yuborish** tugmasini bosganingizda: bot archiver'ga shu faylni yuklashni
+  so‘raydi, archiver uni Telegram'dan tortib oladi (soniyalar), bot esa tayyor bo‘lishi bilan sizga yuboradi.
+- Yuklangan fayl **`MEDIA_ON_DEMAND_TTL_H`** (sukut 24 soat) dan keyin serverdan **o‘chiriladi**, metama'lumot
+  qoladi. Qayta kerak bo‘lsa, yana bir bosishda qaytadan yuklanadi. `TTL=0` — o‘chirmay saqlaydi.
+
+Shunday qilib server disk faqat so‘nggi 24 soatda so‘ralgan fayllar hajmida bo‘ladi — to‘lib ketmaydi.
+Himoyalangan (noforwards) va bir marta ko‘riladigan media bu rejimda ham umuman yuklanmaydi.
+
+> Rejimni o‘zgartirsangiz (`true`↔`false`), oldin `skipped` bo‘lgan media keyingi ishga tushishda qayta
+> ko‘rib chiqiladi: `false` qilsangiz avtomatik yuklashga qaytadi.
+
 ## Disk nazorati
 
 | Sozlama | Sukut | Ma’nosi |
 |---|---|---|
+| `MEDIA_ON_DEMAND` | false | `true` — avtomatik yuklamaydi, faqat so‘ralganda (yuqoriga qarang) |
+| `MEDIA_ON_DEMAND_TTL_H` | 24 | So‘ralib yuklangan fayl shuncha soatdan keyin o‘chiriladi (0 = saqlanadi) |
 | `MEDIA_MIN_FREE_GB` | 5 | Shundan kam bo‘sh joy qolsa — yuklash to‘xtaydi |
 | `MEDIA_MAX_TOTAL_GB` | bo‘sh | Barcha media uchun umumiy chegara (ixtiyoriy) |
 

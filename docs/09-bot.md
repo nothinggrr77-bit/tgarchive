@@ -124,7 +124,7 @@ matn...
 ```
 
 - **📎 Faylni olish** — yuklangan faylni bot yuboradi (rasm — rasm, ovozli — ovozli; bo‘lmasa hujjat sifatida).
-- **⬇️ Yuklab olish** — katta (yoki siyosat bo‘yicha yuklanmagan) faylni archiver navbatiga qo‘yadi (`audit_log` ga yoziladi). Himoyalangan va view-once media uchun tugma chiqmaydi.
+- **📥 Yuklab yuborish** — serverda hali yo‘q faylni (katta, yoki `MEDIA_ON_DEMAND` rejimida) archiver Telegram'dan yuklab oladi va bot tayyor bo‘lishi bilan **sizga yuboradi** (`audit_log` ga yoziladi). Kichik fayllar bir necha soniyada keladi; juda kattasida biroz kutish kerak. Himoyalangan va view-once media uchun tugma chiqmaydi.
 - **📃 To‘liq matn** — 3900 belgidan uzun xabar bo‘laklarga bo‘linib yuboriladi.
 - **📱 Telegramda ochish** — xabarni asl Telegram'da ochadi. Ommaviy username bo‘lsa `t.me/<username>/<id>`, maxfiy kanal/superguruhda `t.me/c/<id>/<id>` (faqat a'zolar). Shaxsiy chat va oddiy guruhda Telegram havola bermaydi, shuning uchun tugma chiqmaydi.
 - **🧵 Zanjir** — to‘liq reply-ipi: yuqorida asl xabarlargacha, o‘rtada shu xabar (▸), pastda unga yozilgan javoblar.

@@ -19,6 +19,18 @@ NEVER_DOWNLOADED = frozenset({MediaSkipReason.PROTECTED, MediaSkipReason.VIEW_ON
 _UNITS = ("B", "KB", "MB", "GB", "TB")
 
 
+def is_fetchable(media: Media) -> bool:
+    """Fayl hozir serverda yo'q, lekin egasi so'rasa yuklab olish mumkinmi.
+
+    Yuklangan (DONE) — allaqachon bor; himoyalangan/view-once — hech qachon; Telegram'da
+    yo'q (unavailable) — foyda yo'q. Qolgan hamma holat (talab bo'yicha, katta, siyosat,
+    tur, xato, navbatda) — bosilganda yuklab beriladi.
+    """
+    if media.status is MediaStatus.DONE or media.status is MediaStatus.UNAVAILABLE:
+        return False
+    return media.skip_reason not in NEVER_DOWNLOADED
+
+
 def format_size(size: int | None) -> str:
     if size is None:
         return "?"
