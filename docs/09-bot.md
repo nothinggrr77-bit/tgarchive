@@ -65,7 +65,7 @@ Ikkinchi akkauntdan botga **`/start`** yuboring — menyu chiqadi va buyruqlar r
 | `/start` | Menyu (tugmalar bilan) |
 | `/search matn [filtrlar]` | Qidiruv. **Oddiy matn yuborish ham qidiruv** |
 | `/recent` | So‘nggi xabarlar (barcha chatlar) |
-| `/chats` | Arxivdagi chatlar; chatni bosing → **suhbatni Telegram'dagidek o‘qiysiz** (pastda) |
+| `/chats` | Arxivdagi chatlar **bo‘limlarga ajratilgan**: 📋 Hammasi · 👤 Shaxsiy · 👥 Guruh · 🏟 Superguruh · 📢 Kanal · 🤖 Bot · 💾 Saqlangan (har bo‘lim tugmasida chatlar soni). `/chats kanal` — to‘g‘ridan-to‘g‘ri bo‘lim. Chatni bosing → **suhbatni Telegram'dagidek o‘qiysiz** (pastda) |
 | `/deleted` | O‘chirilganligi qayd etilgan xabarlar (o‘chirilish vaqti bo‘yicha) |
 | `/media` | Media statistikasi, turlar bo‘yicha ro‘yxat, **📦 Katta fayllar**, **🗑 O‘chirilgan**; `/media nom` — fayl nomi bo‘yicha |
 | `/stats` | Arxiv statistikasi, 7 kunlik faollik, eng faol chatlar va yuboruvchilar |

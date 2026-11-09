@@ -58,7 +58,10 @@ class FetchFile(CallbackData, prefix="fx"):
 
 
 class ChatsPage(CallbackData, prefix="cp"):
+    """Chatlar ro'yxati: ``kind=""`` — hammasi, aks holda ``ChatType`` qiymati (private, channel ...)."""
+
     offset: int
+    kind: str = ""
 
 
 class OpenChat(CallbackData, prefix="c"):

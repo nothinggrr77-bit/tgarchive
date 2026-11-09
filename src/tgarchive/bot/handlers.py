@@ -42,7 +42,7 @@ from tgarchive.bot.callbacks import (
     Thread,
     Versions,
 )
-from tgarchive.bot.format import esc
+from tgarchive.bot.format import CHAT_TYPE_ALIASES, esc
 from tgarchive.bot.views import BOT_UPLOAD_LIMIT, EXPORT_HELP, FileToSend, View, Views
 from tgarchive.db.media import format_size
 from tgarchive.db.enums import MediaType
@@ -137,8 +137,16 @@ def build_router(views: Views) -> Router:
         await send(bot, await views.recent())
 
     @router.message(Command("chats"))
-    async def on_chats(message: Message, bot: Bot) -> None:
-        await send(bot, await views.chats())
+    async def on_chats(message: Message, bot: Bot, command: CommandObject) -> None:
+        # /chats — hammasi; /chats kanal (shaxsiy, guruh, superguruh, bot, saqlangan) — shu bo'lim
+        arg = (command.args or "").strip().lower()
+        kind = CHAT_TYPE_ALIASES.get(arg)
+        if arg and kind is None:
+            await bot.send_message(
+                owner, "Bo'limlar: shaxsiy, guruh, superguruh, kanal, bot, saqlangan. Masalan: <code>/chats kanal</code>"
+            )
+            return
+        await send(bot, await views.chats(kind=kind.value if kind else ""))
 
     @router.message(Command("deleted"))
     async def on_deleted(message: Message, bot: Bot) -> None:
@@ -334,7 +342,7 @@ def build_router(views: Views) -> Router:
 
     @router.callback_query(ChatsPage.filter())
     async def on_chats_page(callback: CallbackQuery, callback_data: ChatsPage, bot: Bot) -> None:
-        await edit(bot, callback, await views.chats(callback_data.offset))
+        await edit(bot, callback, await views.chats(callback_data.offset, callback_data.kind))
         await callback.answer()
 
     @router.callback_query(OpenChat.filter())

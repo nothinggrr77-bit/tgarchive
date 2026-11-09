@@ -119,6 +119,9 @@ class ArchiverService:
                     client, db, self.settings, stop=self.stop, sleep=self._sleep, clock=self._clock
                 )
                 media_task = asyncio.create_task(self.media.run())
+                if self.realtime is not None:
+                    # Yangi faylli xabar kelishi bilan worker uyg'onadi (keyin o'chirilsa ham fayl ulgurilsin)
+                    self.realtime.on_media = getattr(self.media, "wake", None)
                 # Zaxira, retention, eksport tozalash — faqat doimiy xizmatda
                 self.maintenance = self.maintenance_factory(
                     db, self.settings, stop=self.stop, sleep=self._sleep, clock=self._clock

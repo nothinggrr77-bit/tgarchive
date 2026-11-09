@@ -175,6 +175,168 @@ async def test_on_demand_expiry_frees_disk(db: Database, tmp_path: Path) -> None
     assert media[1].local_path is None and not path.exists()  # fayl o'chdi, metama'lumot qoldi
 
 
+# ------------------------------------------------- o'chirilgan xabarlar fayli
+
+
+def test_recent_cache_downloads_new_media_in_on_demand_mode(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    now = at(60 * 24 * 10)
+    cfg = settings(tmp_path, media_on_demand=True, media_recent_cache_h=48)
+    fresh, fmsg, fchat = _objects()
+    fmsg.date = now - timedelta(hours=1)
+    assert classify(fresh, fmsg, fchat, cfg, now).download is True  # yangi — darhol saqlanadi
+    old, omsg, ochat = _objects()
+    omsg.date = now - timedelta(hours=72)
+    assert classify(old, omsg, ochat, cfg, now).reason is MediaSkipReason.ON_DEMAND  # eski — faqat so'ralganda
+    # Oyna o'chiq bo'lsa — yangi xabar ham faqat so'ralganda
+    off = settings(tmp_path, media_on_demand=True, media_recent_cache_h=0)
+    assert classify(fresh, fmsg, fchat, off, now).reason is MediaSkipReason.ON_DEMAND
+    # Himoya va hajm chegarasi oynada ham ustun
+    fmsg.noforwards = True
+    assert classify(fresh, fmsg, fchat, cfg, now).reason is MediaSkipReason.PROTECTED
+    big, bmsg, bchat = _objects(size=5 * MB)
+    bmsg.date = now - timedelta(hours=1)
+    assert classify(big, bmsg, bchat, cfg, now).reason is MediaSkipReason.TOO_LARGE
+
+
+async def test_recent_cache_end_to_end(db: Database, tmp_path: Path) -> None:
+    """Talab bo'yicha rejim: yangi xabar fayli darhol olinadi, eskisi esa so'ralmaguncha olinmaydi."""
+    from datetime import timedelta
+
+    clock = FakeClock(at(60 * 24 * 3))
+    tg = FakeTelegram()
+    tg.add_chat(
+        user(),
+        pm(1, doc("eski.pdf", 100, 501)),  # 3 kun oldin
+        message(4000, peer=types.PeerUser(ALI_ID), media=doc("yangi.pdf", 100, 502), date=clock.now - timedelta(hours=2)),
+    )
+    tg.files[(ALI_ID, 1)] = b"E" * 100
+    tg.files[(ALI_ID, 4000)] = b"Y" * 100
+    cfg = settings(tmp_path, media_on_demand=True, media_recent_cache_h=48)
+    await archive(tmp_path, db, tg, cfg)
+    await worker(tg, db, cfg, clock=clock).run_once()
+    media = await rows(db)
+    assert media[4000].status is MediaStatus.DONE
+    assert media[1].status is MediaStatus.SKIPPED and media[1].skip_reason is MediaSkipReason.ON_DEMAND
+
+
+async def test_deleted_message_file_is_never_expired(db: Database, tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from tgarchive.db.store import apply_deletions
+
+    tg = FakeTelegram()
+    tg.add_chat(user(), pm(1, doc("a.pdf", 100, 601)), pm(2, doc("b.pdf", 100, 602)))
+    tg.files[(ALI_ID, 1)] = b"A" * 100
+    tg.files[(ALI_ID, 2)] = b"B" * 100
+    cfg = settings(tmp_path)
+    await archive(tmp_path, db, tg, cfg)
+    await worker(tg, db, cfg).run_once()
+    clock = FakeClock()
+    async with db.write() as s:
+        for m in (await rows(db)).values():
+            (await s.get(Media, m.id)).downloaded_at = clock.now - timedelta(hours=100)
+        await apply_deletions(s, [1], chat_id=ALI_ID)  # 1-xabar o'chirildi
+
+    on_demand = settings(tmp_path, media_on_demand=True, media_on_demand_ttl_h=24, media_recent_cache_h=48)
+    assert await worker(tg, db, on_demand, clock=clock).expire_downloads(clock.now) == 1
+    media = await rows(db)
+    assert media[1].status is MediaStatus.DONE  # o'chirilgan xabar fayli — doimiy
+    assert resolve_media_path(cfg.paths.media, media[1].local_path).exists()
+    assert media[2].status is MediaStatus.SKIPPED and media[2].local_path is None  # oddiy — muddati o'tdi
+
+
+async def test_recent_cache_file_waits_for_the_window(db: Database, tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    clock = FakeClock(at(60 * 24 * 3))
+    tg = FakeTelegram()
+    tg.add_chat(user(), message(10, peer=types.PeerUser(ALI_ID), media=doc("c.pdf", 100, 603), date=clock.now - timedelta(hours=30)))
+    tg.files[(ALI_ID, 10)] = b"C" * 100
+    cfg = settings(tmp_path, media_on_demand=True, media_on_demand_ttl_h=24, media_recent_cache_h=48)
+    await archive(tmp_path, db, tg, cfg)
+    await worker(tg, db, cfg, clock=clock).run_once()
+    async with db.write() as s:
+        m = (await rows(db))[10]
+        (await s.get(Media, m.id)).downloaded_at = clock.now - timedelta(hours=26)  # TTL o'tdi
+    # Xabar hali 48 soatlik oynada — fayl o'chirilmaydi (xabar keyin o'chirilishi mumkin)
+    assert await worker(tg, db, cfg, clock=clock).expire_downloads(clock.now) == 0
+    clock.advance(20 * 3600)  # xabar 50 soatlik — oynadan chiqdi
+    assert await worker(tg, db, cfg, clock=clock).expire_downloads(clock.now) == 1
+
+
+async def test_deleted_message_file_is_taken_from_a_forwarded_copy(db: Database, tmp_path: Path) -> None:
+    from tgarchive.db.store import apply_deletions
+
+    tg = FakeTelegram()
+    tg.add_chat(user(), pm(1, doc("rasm.pdf", 500, 700)))
+    tg.add_chat(user(8, first_name="Vali"), message(5, peer=types.PeerUser(8), media=doc("rasm.pdf", 500, 700)))
+    tg.files[(8, 5)] = b"S" * 500  # faqat Vali chatidagi nusxa Telegram'da qolgan
+    cfg = settings(tmp_path, media_on_demand=True, media_recent_cache_h=0)
+    await archive(tmp_path, db, tg, cfg)
+    w = worker(tg, db, cfg)
+    await w.run_once()  # talab bo'yicha — hech narsa yuklanmaydi
+    del tg.history[ALI_ID][1]  # Ali xabarni o'chirdi
+    async with db.write() as s:
+        await apply_deletions(s, [1], chat_id=ALI_ID)
+        await request_fetch(s, (await rows(db))[1].id)  # egasi "📥 Nusxasini izlash" bosdi
+    await w.run_once()
+    media = (await rows(db))[1]
+    assert media.status is MediaStatus.DONE and "boshqa nusxadan" in media.status_note
+    assert resolve_media_path(cfg.paths.media, media.local_path).read_bytes() == b"S" * 500
+    assert w.stats["from_twin"] == 1
+
+
+async def test_protected_copy_is_not_used_as_a_source(db: Database, tmp_path: Path) -> None:
+    from tgarchive.db.store import apply_deletions
+
+    tg = FakeTelegram()
+    tg.add_chat(user(), pm(1, doc("rasm.pdf", 500, 701)))
+    tg.add_chat(user(8, first_name="Vali"), message(5, peer=types.PeerUser(8), media=doc("rasm.pdf", 500, 701), noforwards=True))
+    tg.files[(8, 5)] = b"S" * 500
+    cfg = settings(tmp_path, media_on_demand=True, media_recent_cache_h=0)
+    await archive(tmp_path, db, tg, cfg)
+    del tg.history[ALI_ID][1]
+    async with db.write() as s:
+        await apply_deletions(s, [1], chat_id=ALI_ID)
+        await request_fetch(s, (await rows(db))[1].id)
+    await worker(tg, db, cfg).run_once()
+    # Yagona nusxa himoyalangan (noforwards) — undan olinmaydi
+    assert (await rows(db))[1].status is MediaStatus.UNAVAILABLE
+    assert tg.count("download_media") == 0
+
+
+async def test_wake_interrupts_idle_wait(db: Database, tmp_path: Path) -> None:
+    w = MediaWorker(FakeTelegram(), db, settings(tmp_path), disk_usage=disk())
+    w.wake()
+    await asyncio.wait_for(w._idle(60), timeout=1)  # uyg'otilgan — kutmaydi
+    w._wake.clear()
+
+    async def later() -> None:
+        await asyncio.sleep(0.05)
+        w.wake()
+
+    waker = asyncio.create_task(later())
+    await asyncio.wait_for(w._idle(60), timeout=1)
+    await waker
+
+    # Xizmat worker'ga o'z sleep'ini beradi (ArchiverService) — uyg'otish shunda ham ishlashi shart
+    slow = MediaWorker(FakeTelegram(), db, settings(tmp_path), disk_usage=disk(), sleep=asyncio.sleep)
+    waker = asyncio.create_task(later_wake(slow))
+    await asyncio.wait_for(slow._idle(60), timeout=1)
+    await waker
+    # Uyg'otilmasa — odatdagi sleep oxirigacha kutiladi
+    recorded = RecordingSleep()
+    await worker(FakeTelegram(), db, settings(tmp_path), sleep=recorded)._idle(8)
+    assert recorded.calls == [8]
+
+
+async def later_wake(w: MediaWorker) -> None:
+    await asyncio.sleep(0.05)
+    w.wake()
+
+
 def test_extensions_and_paths_cannot_escape(tmp_path: Path) -> None:
     def ext(media_type: MediaType, name: str | None = None, mime: str | None = None) -> str:
         return media_extension(Media(media_type=media_type, file_name=name, mime_type=mime))

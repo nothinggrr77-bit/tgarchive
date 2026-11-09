@@ -173,6 +173,67 @@ async def test_chats_and_chat_views(views: Views, archive: Archive) -> None:
     assert "o'chirilgan xabar" in deleted.text and "salom" not in deleted.text
 
 
+async def test_chats_are_split_by_type(views: Views, archive: Archive, db: Database) -> None:
+    from tgarchive.bot.callbacks import ChatsPage
+    from tgarchive.db.enums import ArchiveMode
+    from tgarchive.db.models import Chat
+
+    # Arxivlanmaydigan bot chati (ARCHIVE_BOTS=false) — bot bo'limida maslahat chiqadi
+    async with db.write() as session:
+        session.add(Chat(chat_id=4242, chat_type=ChatType.BOT, title="Ob-havo bot", archive_mode=ArchiveMode.SKIP))
+
+    everything = await views.chats()
+    texts = button_texts(everything)
+    # Tepada bo'limlar: har birida chatlar soni, tanlangani ✅
+    assert "✅ 📋 Hammasi 2" in texts and "👤 Shaxsiy 1" in texts and "📢 Kanal 1" in texts
+    assert "👥 Guruh 0" in texts and "🏟 Superguruh 0" in texts and "🤖 Bot 0" in texts and "💾 Saqlangan 0" in texts
+    assert ChatsPage(offset=0, kind="channel").pack() in callbacks(everything)
+    assert "Ali" in everything.text and "Yangiliklar" in everything.text and "Ob-havo" not in everything.text
+
+    private = await views.chats(kind="private")
+    assert "Chatlar · 👤 Shaxsiy" in private.text and "Ali" in private.text and "Yangiliklar" not in private.text
+    assert "✅ 👤 Shaxsiy 1" in button_texts(private)
+    assert Conversation(chat_id=7).pack() in callbacks(private)  # raqam — suhbatni ochadi
+
+    channels = await views.chats(kind="channel")
+    assert "Yangiliklar" in channels.text and "Ali" not in channels.text
+
+    bots = await views.chats(kind="bot")
+    assert "1 ta bot chati bor, lekin arxivlanmaydi" in bots.text and "ARCHIVE_BOTS=true" in bots.text
+    # Bo'sh bo'limda ham boshqa bo'limlarga o'tish tugmalari turadi
+    assert ChatsPage(offset=0, kind="").pack() in callbacks(bots)
+
+    assert (await views.chats(kind="nimadir")).text == "Noma'lum chat turi."
+
+
+async def test_chats_paging_keeps_the_section(views: Views, archive: Archive, db: Database) -> None:
+    from tgarchive.bot.callbacks import ChatsPage
+    from tgarchive.db.enums import ArchiveMode
+    from tgarchive.db.models import Chat
+
+    async with db.write() as session:
+        for i in range(views.page_size + 2):
+            session.add(Chat(chat_id=-(500 + i), chat_type=ChatType.GROUP, title=f"Guruh {i}", archive_mode=ArchiveMode.FULL))
+    first = await views.chats(kind="group")
+    assert f"/ {views.page_size + 2}" in first.text
+    assert ChatsPage(offset=views.page_size, kind="group").pack() in callbacks(first)
+    second = await views.chats(views.page_size, "group")
+    assert "Guruh" in second.text and "Ali" not in second.text
+
+
+async def test_chats_command_opens_a_section(harness: BotHarness, archive: Archive) -> None:
+    await harness.feed(text_update("/chats kanal"))
+    listing = harness.session.of(SendMessage)[-1]
+    assert "Chatlar · 📢 Kanal" in listing.text and "Yangiliklar" in listing.text
+    await harness.feed(text_update("/chats yoqmaydi"))
+    assert "Bo'limlar:" in harness.session.of(SendMessage)[-1].text
+    # Bo'lim tugmasi shu xabarni almashtiradi
+    from tgarchive.bot.callbacks import ChatsPage
+
+    await harness.feed(callback_update(ChatsPage(offset=0, kind="private").pack()))
+    assert "Chatlar · 👤 Shaxsiy" in harness.session.of(EditMessageText)[-1].text
+
+
 async def test_conversation_reads_like_a_chat(views: Views, archive: Archive) -> None:
     view = await views.conversation(7)  # page_size=2 -> eng yangi 2 ta: #7 (uzun), #8 (chiquvchi)
     assert view.text.startswith("💬 <b>Ali</b> · shaxsiy")
@@ -393,6 +454,13 @@ async def test_deleted_media_view(views: Views, archive: Archive, db: Database) 
 
     view = await views.media_browse(deleted=True)
     assert "🗑 O'chirilgan media" in view.text and "kino.zip" in view.text
+    assert "saqlab qolingan: 1 · saqlanmagan: 1" in view.text
+    # O'chirilgan xabarning saqlangan fayli — xabar ekranida aniq yoziladi
+    kept = await views.message(archive.pk[1])
+    assert "fayl arxivda saqlanib qolgan" in kept.text and "📎 Faylni olish" in button_texts(kept)
+    # Saqlanmagan fayl — "boshqa nusxani izlash" tugmasi
+    lost = await views.message(archive.pk[2])
+    assert "o'chirilishidan oldin saqlanmagan" in lost.text and "📥 Nusxasini izlash" in button_texts(lost)
     # Yuklab olingan fayl — xabari o'chirilgan bo'lsa ham 📎 bilan olinadi
     assert SendFile(media_id=archive.media[1]).pack() in callbacks(view)
     # Yuklanmagan katta fayl — ⓘ orqali xabarga

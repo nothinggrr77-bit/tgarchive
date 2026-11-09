@@ -25,7 +25,44 @@ CHAT_TYPES = {
     ChatType.SUPERGROUP: "superguruh",
     ChatType.CHANNEL: "kanal",
 }
-MODES = {ArchiveMode.FULL: "to'liq", ArchiveMode.WINDOW: "oxirgi postlar", ArchiveMode.SKIP: "arxivlanmaydi"}
+# /chats bo'limlari (tablar): tartib — tugmalar shu tartibda chiqadi; "" — hammasi
+CHAT_TABS: tuple[tuple[ChatType | None, str], ...] = (
+    (None, "📋 Hammasi"),
+    (ChatType.PRIVATE, "👤 Shaxsiy"),
+    (ChatType.GROUP, "👥 Guruh"),
+    (ChatType.SUPERGROUP, "🏟 Superguruh"),
+    (ChatType.CHANNEL, "📢 Kanal"),
+    (ChatType.BOT, "🤖 Bot"),
+    (ChatType.SAVED, "💾 Saqlangan"),
+)
+# Shu turdagi chatlar qaysi .env sozlamasi bilan arxivlanadi (bo'sh bo'lim uchun maslahat)
+CHAT_TYPE_SETTING = {
+    ChatType.PRIVATE: "ARCHIVE_PRIVATE",
+    ChatType.BOT: "ARCHIVE_BOTS",
+    ChatType.SAVED: "ARCHIVE_SAVED",
+    ChatType.GROUP: "ARCHIVE_GROUPS",
+    ChatType.SUPERGROUP: "ARCHIVE_GROUPS",
+    ChatType.CHANNEL: "ARCHIVE_CHANNELS",
+}
+# /chats <so'z> — qo'lda yozilgan bo'lim nomlari
+CHAT_TYPE_ALIASES = {
+    "shaxsiy": ChatType.PRIVATE,
+    "private": ChatType.PRIVATE,
+    "guruh": ChatType.GROUP,
+    "guruhlar": ChatType.GROUP,
+    "group": ChatType.GROUP,
+    "superguruh": ChatType.SUPERGROUP,
+    "superguruhlar": ChatType.SUPERGROUP,
+    "supergroup": ChatType.SUPERGROUP,
+    "kanal": ChatType.CHANNEL,
+    "kanallar": ChatType.CHANNEL,
+    "channel": ChatType.CHANNEL,
+    "bot": ChatType.BOT,
+    "botlar": ChatType.BOT,
+    "saqlangan": ChatType.SAVED,
+    "saved": ChatType.SAVED,
+}
+MODES ={ArchiveMode.FULL: "to'liq", ArchiveMode.WINDOW: "oxirgi postlar", ArchiveMode.SKIP: "arxivlanmaydi"}
 DELETION = {DeletionStatus.CONFIRMED: "o'chirilgan (tasdiqlangan)", DeletionStatus.PROBABLE: "o'chirilgan (ehtimoliy)"}
 MEDIA_ICONS = {
     MediaType.PHOTO: "🖼",

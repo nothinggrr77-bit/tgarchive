@@ -165,6 +165,11 @@ class ArchiverSettings(BaseAppSettings):
     media_on_demand: bool = False
     # Talab bo'yicha yuklangan fayl shuncha soatdan keyin serverdan o'chiriladi (0 = saqlab qolinadi)
     media_on_demand_ttl_h: int = Field(24, ge=0, le=24 * 365)
+    # Talab bo'yicha rejimda ham: shuncha soatdan yangi xabarlarning fayllari avtomatik yuklanadi.
+    # Xabar shu oynada o'chirilsa — fayli arxivda doimiy qoladi; o'chirilmasa, oyna o'tgach o'chiriladi.
+    # Telegram o'chirilgan xabarning faylini bermaydi, shuning uchun uni oldindan olish yagona ishonchli yo'l.
+    # 0 — o'chiq (faqat egasi so'raganda).
+    media_recent_cache_h: int = Field(48, ge=0, le=24 * 30)
     # Bundan katta fayl yuklanmaydi, lekin "katta fayl" sifatida metama'lumoti bilan ko'rsatiladi
     media_max_file_mb: int = Field(50, ge=1, le=4000)
     media_max_total_gb: float | None = Field(None, gt=0)

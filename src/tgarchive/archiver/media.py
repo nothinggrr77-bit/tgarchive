@@ -16,6 +16,16 @@ Tarix importi va real vaqt har bir fayl uchun ``pending`` qator yaratadi, worker
 5. **Xatoda** — 1 daqiqa → 12 soatgacha oshib boruvchi qayta urinish, ``MEDIA_MAX_ATTEMPTS``
    dan keyin ``failed``. FloodWait urinish hisoblanmaydi.
 
+O'chirilgan xabarlar fayli. Telegram faylni ``id`` + ``access_hash`` + ``file_reference`` bilan
+beradi; ``file_reference`` vaqtinchalik va faqat fayl turgan joydan (xabardan) yangilanadi —
+xabar o'chirilgach, bu manba yo'qoladi. Shuning uchun:
+
+* **Oldindan saqlash** (``MEDIA_RECENT_CACHE_H``): talab bo'yicha rejimda ham yangi xabarlarning
+  fayllari darhol yuklanadi; realtime yangi faylli xabar kelganda worker'ni uyg'otadi.
+* **O'chirilgan xabar fayli o'chirilmaydi**: muddati (TTL) o'tsa ham arxivda doimiy qoladi.
+* **Boshqa nusxa**: xabar Telegram'da yo'q bo'lsa, xuddi shu fayl (bir xil Telegram ID) arxivdagi
+  boshqa, o'chirilmagan xabarda bo'lsa (forward) — o'sha xabar orqali yuklanadi.
+
 Fayl yo'li faqat raqamlardan va tozalangan kengaytmadan yasaladi:
 ``MEDIA_DIR/<chat_id>/<YYYY-MM>/<message_id>-<media_id>.<ext>``. O'qishda yo'l har doim
 ``MEDIA_DIR`` ichida ekanligi tekshiriladi.
@@ -39,6 +49,7 @@ from sqlalchemy import select, update
 from telethon import errors
 from telethon.tl import types
 
+from tgarchive.archiver.convert import media_info
 from tgarchive.archiver.history import FATAL_ERRORS, INACCESSIBLE_ERRORS, TRANSIENT_ERRORS, Sleep
 from tgarchive.config import ArchiverSettings
 from tgarchive.db.engine import Database
@@ -69,6 +80,7 @@ TRASH_CHUNK = 200
 TMP_DIR = ".tmp"
 POLICY_META_KEY = "media_policy"
 NOTE_LIMIT = 255
+TWIN_CANDIDATES = 5  # o'chirilgan xabar fayli uchun nechta boshqa nusxa sinab ko'riladi
 
 
 class Decision(NamedTuple):
@@ -86,7 +98,16 @@ class TooLarge(Exception):
 # ------------------------------------------------------------------ siyosat
 
 
-def classify(media: Media, message: Message, chat: Chat, settings: ArchiverSettings) -> Decision:
+def is_recent(message: Message, settings: ArchiverSettings, now: datetime | None) -> bool:
+    """Xabar oldindan saqlash oynasidami (``MEDIA_RECENT_CACHE_H``)."""
+    if now is None or settings.media_recent_cache_h <= 0 or message.date is None:
+        return False
+    return message.date >= now - timedelta(hours=settings.media_recent_cache_h)
+
+
+def classify(
+    media: Media, message: Message, chat: Chat, settings: ArchiverSettings, now: datetime | None = None
+) -> Decision:
     if media.ttl_seconds:
         return Decision(False, MediaSkipReason.VIEW_ONCE, "bir marta ko'riladigan media")
     if message.noforwards or chat.is_protected:
@@ -102,7 +123,8 @@ def classify(media: Media, message: Message, chat: Chat, settings: ArchiverSetti
     # Shu yergacha yetgan media tur va siyosat bo'yicha YUKLANADIGAN media. Rejimga qaraymiz:
     # talab bo'yicha rejimda uni avtomatik yuklamaymiz (stiker/kanal/boshqa yuklanmaydiganlar
     # yuqorida o'z sababi bilan ajralib chiqdi — ular "navbatda" bo'lib qolmaydi).
-    if settings.media_on_demand:
+    # Istisno — yangi xabarlar (oldindan saqlash oynasi): o'chirilsa ham fayli qolsin.
+    if settings.media_on_demand and not is_recent(message, settings, now):
         return Decision(False, MediaSkipReason.ON_DEMAND, "talab bo'yicha — faqat so'raganda yuklanadi")
     limit = settings.media_max_file_mb * 1024 * 1024
     if media.expected_size is not None and media.expected_size > limit:
@@ -118,13 +140,15 @@ def policy_fingerprint(settings: ArchiverSettings) -> str:
     return json.dumps(
         {
             # rev: tasnif mantig'i o'zgarganda oshiriladi — shunda sozlama o'zgarmasa ham mavjud
-            # skipped qatorlar bir marta qayta ko'rib chiqiladi (2: on_demand endi tur/siyosatdan keyin).
-            "rev": 2,
+            # skipped qatorlar bir marta qayta ko'rib chiqiladi (2: on_demand endi tur/siyosatdan keyin;
+            # 3: oldindan saqlash oynasi).
+            "rev": 3,
             "enabled": settings.media_enabled,
             "types": sorted(settings.media_types),
             "max_mb": settings.media_max_file_mb,
             "channels": settings.media_in_channels,
             "on_demand": settings.media_on_demand,
+            "recent_h": settings.media_recent_cache_h,
         },
         sort_keys=True,
     )
@@ -144,6 +168,9 @@ class _Job:
     message_id: int
     relpath: str
     force: bool
+    message_pk: int = 0
+    media_type: MediaType | None = None
+    tg_media_id: int | None = None
 
 
 # --------------------------------------------------------------------- worker
@@ -175,6 +202,8 @@ class MediaWorker:
         self.current: dict[str, Any] = {}
         self.stats: Counter[str] = Counter()
         self._next_expire: datetime | None = None
+        # Realtime yangi faylli xabar kelganda uyg'otadi: tez o'chiriladigan xabarlar fayli ham ulgurilsin
+        self._wake = asyncio.Event()
 
     # ------------------------------------------------------------ aylanish
 
@@ -205,7 +234,7 @@ class MediaWorker:
                 await self._sleep(PAUSE_S)
             elif handled == 0:
                 self.state = "idle"
-                await self._sleep(IDLE_S)
+                await self._idle(IDLE_S)
 
     async def prepare(self) -> None:
         """Ishga tushishda: kataloglar, uzilgan yuklashlar, sozlama o'zgarishi, axlat, tekshiruv."""
@@ -238,6 +267,8 @@ class MediaWorker:
 
     async def run_once(self) -> int:
         """Bitta partiya. Qaytaradi: ko'rib chiqilgan qatorlar soni."""
+        # Shu partiya ishlayotganda kelgan "uyg'otish" keyingi partiyani darhol boshlaydi
+        self._wake.clear()
         ensure_private_dir(self.root)
         ensure_private_dir(self.tmp)
         await self.empty_trash()
@@ -272,7 +303,7 @@ class MediaWorker:
                 )
             ).all()
             for media, message, chat in rows:
-                decision = classify(media, message, chat, self.settings)
+                decision = classify(media, message, chat, self.settings, now)
                 twin_key = (media.media_type, media.tg_media_id) if media.tg_media_id is not None else None
                 if not decision.download:
                     self._skip(media, decision.reason, decision.note, now)
@@ -290,6 +321,9 @@ class MediaWorker:
                             message.message_id,
                             media.local_path or media_relpath(media, message),
                             media.force_download,
+                            message.id,
+                            media.media_type,
+                            media.tg_media_id,
                         )
                     )
             jobs = self._within_disk_budget(jobs, {m.id: m for m, _, _ in rows}, stored)
@@ -396,9 +430,16 @@ class MediaWorker:
         try:
             entity = await self.client.get_input_entity(job.chat_id)
             [message] = await self.client.get_messages(entity, ids=[job.message_id])
+            source_note: str | None = None
             if message is None or isinstance(message, types.MessageEmpty) or message.media is None:
-                await self._finish(job, MediaStatus.UNAVAILABLE, note="xabar yoki media Telegram'da endi yo'q")
-                return
+                # Xabar o'chirilgan: xuddi shu fayl boshqa (o'chirilmagan) xabarda bo'lsa — o'shandan olamiz
+                twin = await self._twin_message(job)
+                if twin is None:
+                    await self._finish(job, MediaStatus.UNAVAILABLE, note="xabar yoki media Telegram'da endi yo'q")
+                    return
+                message, twin_chat, twin_id = twin
+                source_note = f"boshqa nusxadan olindi: chat {twin_chat}, xabar {twin_id}"
+                self.stats["from_twin"] += 1
             result = await self.client.download_media(message, file=str(tmp), progress_callback=progress)
             if result is None:
                 await self._finish(job, MediaStatus.UNAVAILABLE, note="Telegram faylni bermadi")
@@ -409,7 +450,7 @@ class MediaWorker:
             final = resolve_media_path(self.root, job.relpath)
             ensure_private_dir(final.parent)
             os.replace(tmp, final)
-            await self._finish(job, MediaStatus.DONE, size=size, digest=digest)
+            await self._finish(job, MediaStatus.DONE, size=size, digest=digest, note=source_note)
             self.stats["downloaded"] += 1
             log.info("media_downloaded", media_id=job.media_pk, chat_id=job.chat_id, size=size)
         except TooLarge as exc:
@@ -436,6 +477,45 @@ class MediaWorker:
             with suppress(OSError):
                 tmp.unlink(missing_ok=True)
             self.current = {}
+
+    async def _twin_message(self, job: _Job) -> tuple[Any, int, int] | None:
+        """O'chirilgan xabar fayli uchun boshqa manba: xuddi shu Telegram fayli (forward / qayta yuborish)
+        turgan arxivdagi boshqa, o'chirilmagan va himoyalanmagan xabar. Telegram'dan qayta olinadi va
+        fayl ID'si mosligi tekshiriladi. Qaytaradi: (Telethon xabari, chat_id, message_id) yoki None.
+        """
+        if job.tg_media_id is None or job.media_type is None:
+            return None
+        async with self.db.read() as session:
+            candidates = (
+                await session.execute(
+                    select(Message.chat_id, Message.message_id)
+                    .join(Media, Media.message_pk == Message.id)
+                    .join(Chat, Chat.chat_id == Message.chat_id)
+                    .where(
+                        Media.tg_media_id == job.tg_media_id,
+                        Media.media_type == job.media_type,
+                        Media.superseded_at.is_(None),
+                        Message.id != job.message_pk,
+                        Message.deletion_status.is_(None),
+                        Message.noforwards.is_(False),
+                        Chat.is_protected.is_(False),
+                    )
+                    .order_by(Message.date.desc())
+                    .limit(TWIN_CANDIDATES)
+                )
+            ).all()
+        for chat_id, message_id in candidates:
+            try:
+                entity = await self.client.get_input_entity(chat_id)
+                [found] = await self.client.get_messages(entity, ids=[message_id])
+            except (ValueError, *INACCESSIBLE_ERRORS):
+                continue
+            if found is None or isinstance(found, types.MessageEmpty) or getattr(found, "noforwards", False):
+                continue
+            info = media_info(found.media)
+            if info is not None and info.tg_media_id == job.tg_media_id:
+                return found, chat_id, message_id
+        return None
 
     async def _finish(
         self,
@@ -579,23 +659,28 @@ class MediaWorker:
 
         Fayl o'chiriladi, metama'lumot qoladi va qayta ``on_demand`` bo'ladi — egasi keyin yana so'rasa
         qaytadan yuklab beriladi. Shunday qilib server disk ``MEDIA_ON_DEMAND_TTL_H`` oynasidan oshmaydi.
+        O'chirilgan xabarlarning fayllari va oldindan saqlash oynasidagi fayllar bundan mustasno.
         """
         if not self.settings.media_on_demand or self.settings.media_on_demand_ttl_h <= 0:
             return 0
         cutoff = now - timedelta(hours=self.settings.media_on_demand_ttl_h)
         removed = 0
-        async with self.db.write() as session:
-            rows = list(
-                await session.scalars(
-                    select(Media)
-                    .where(
-                        Media.status == MediaStatus.DONE,
-                        Media.downloaded_at.is_not(None),
-                        Media.downloaded_at < cutoff,
-                    )
-                    .limit(EXPIRE_BATCH)
-                )
+        stmt = (
+            select(Media)
+            .join(Message, Message.id == Media.message_pk)
+            .where(
+                Media.status == MediaStatus.DONE,
+                Media.downloaded_at.is_not(None),
+                Media.downloaded_at < cutoff,
+                # O'chirilgan xabarning fayli — Telegram uni qayta bermaydi, doimiy saqlanadi
+                Message.deletion_status.is_(None),
             )
+        )
+        if self.settings.media_recent_cache_h > 0:
+            # Oldindan saqlash oynasidagi xabarlar fayli — oyna tugaguncha turadi (o'chirilishi mumkin)
+            stmt = stmt.where(Message.date < now - timedelta(hours=self.settings.media_recent_cache_h))
+        async with self.db.write() as session:
+            rows = list(await session.scalars(stmt.limit(EXPIRE_BATCH)))
             paths = {m.local_path for m in rows if m.local_path}
             for media in rows:
                 media.status = MediaStatus.SKIPPED
@@ -622,6 +707,30 @@ class MediaWorker:
 
     def details(self) -> dict[str, Any]:
         return {"state": self.state, "paused": self.paused, "current": self.current, "stats": dict(self.stats)}
+
+    def wake(self) -> None:
+        """Yangi faylli xabar keldi — bo'sh kutishni to'xtatib, navbatni darhol ko'rib chiqish."""
+        self._wake.set()
+
+    async def _idle(self, seconds: float) -> None:
+        """Bo'sh turganda kutish: odatdagi ``sleep`` (u ``stop`` ni o'zi kuzatadi) va ``wake`` poygasi.
+
+        Xizmat worker'ga o'z ``sleep`` ini beradi — shuning uchun uyg'otish har qanday ``sleep`` bilan ishlaydi.
+        """
+        if self._wake.is_set():
+            return
+        sleeper = asyncio.ensure_future(self._sleep(seconds))
+        waker = asyncio.ensure_future(self._wake.wait())
+        try:
+            await asyncio.wait({sleeper, waker}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            waker.cancel()
+            if not sleeper.done():
+                sleeper.cancel()
+                with suppress(asyncio.CancelledError):
+                    await sleeper
+        if not sleeper.cancelled():
+            sleeper.result()  # sleep ichidagi xato yashirinmasin
 
     async def _interruptible_sleep(self, seconds: float) -> None:
         if seconds <= 0:

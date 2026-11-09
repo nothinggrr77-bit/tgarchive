@@ -41,6 +41,8 @@ from tgarchive.bot.callbacks import (
     Versions,
 )
 from tgarchive.bot.format import (
+    CHAT_TABS,
+    CHAT_TYPE_SETTING,
     CHAT_TYPES,
     DELETION,
     MEDIA_NAMES,
@@ -61,7 +63,7 @@ from tgarchive.bot.format import (
 )
 from tgarchive.config import BotSettings
 from tgarchive.db.engine import Database
-from tgarchive.db.enums import MediaSkipReason, MediaStatus, MediaType
+from tgarchive.db.enums import ChatType, MediaSkipReason, MediaStatus, MediaType
 from tgarchive.db.media import (
     NEVER_DOWNLOADED,
     FetchRefused,
@@ -81,6 +83,8 @@ from tgarchive.db.search import (
     album_items,
     archive_stats,
     chat_detail,
+    chat_type_counts,
+    deleted_media_counts,
     digest,
     list_chats,
     list_media,
@@ -124,7 +128,7 @@ CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
 HELP = """<b>Buyruqlar</b>
 /search <i>matn</i> — qidirish (yoki shunchaki matn yuboring)
 /recent — so'nggi xabarlar
-/chats — arxivdagi chatlar (chatni bosib, suhbatni Telegram'dagidek o'qiysiz)
+/chats — chatlar bo'limlarga ajratilgan: shaxsiy, guruh, superguruh, kanal, bot, saqlangan (<code>/chats kanal</code>)
 /deleted — o'chirilganligi qayd etilgan xabarlar
 /media — media: turlar bo'yicha, katta fayllar, o'chirilganlar; /media <i>nom</i> — fayl nomi bo'yicha
 /stats — arxiv statistikasi (faollik, eng faol chatlar va yuboruvchilar)
@@ -364,7 +368,7 @@ class Views:
         if m.deletion_status:
             head.append(f"🗑 {DELETION[m.deletion_status]}: {local_time(m.deleted_at, self.tz)}")
         if detail.media is not None:
-            head.append("📎 " + self._media_line(detail.media))
+            head.append("📎 " + self._media_line(detail.media, deleted=m.deletion_status is not None))
         elif m.media_type:
             head.append(media_label(m.media_type))
         if detail.reply_count:
@@ -382,7 +386,9 @@ class Views:
         if media is not None and media.status is MediaStatus.DONE:
             builder.button(text="📎 Faylni olish", callback_data=SendFile(media_id=media.id).pack())
         elif media is not None and is_fetchable(media):
-            builder.button(text="📥 Yuklab yuborish", callback_data=FetchFile(media_id=media.id).pack())
+            # O'chirilgan xabar: Telegram faylni faqat boshqa (forward) nusxadan bera oladi
+            label = "📥 Nusxasini izlash" if m.deletion_status else "📥 Yuklab yuborish"
+            builder.button(text=label, callback_data=FetchFile(media_id=media.id).pack())
         if m.grouped_id:
             builder.button(text="🖼 Albomni ko'rish", callback_data=Album(pk=pk).pack())
         if detail.parent is not None or detail.reply_count:
@@ -409,12 +415,21 @@ class Views:
         )
 
     @staticmethod
-    def _media_line(media: Media) -> str:
+    def _media_line(media: Media, *, deleted: bool = False) -> str:
         name = esc(media.file_name) + ", " if media.file_name else ""
         size = format_size(media.stored_size or media.expected_size)
         label = media_label(media.media_type)
         if media.status is MediaStatus.DONE:
-            state = "yuklangan"
+            state = "yuklangan" + (" — xabar o'chirilgan, fayl arxivda saqlanib qolgan" if deleted else "")
+        elif deleted and media.skip_reason in NEVER_DOWNLOADED:
+            state = f"yuklanmaydi ({media.skip_reason.value})"
+        elif deleted and media.status is MediaStatus.UNAVAILABLE:
+            state = "o'chirilishidan oldin saqlanmagan, Telegram'da boshqa nusxasi ham topilmadi"
+        elif deleted:
+            state = (
+                "o'chirilishidan oldin saqlanmagan — «📥 Nusxasini izlash» Telegram'dagi"
+                " boshqa nusxasini (forward) qidiradi"
+            )
         elif media.skip_reason is MediaSkipReason.ON_DEMAND:
             state = "serverda yo'q — «📥 Yuklab yuborish» bosing"
         elif media.skip_reason is MediaSkipReason.TOO_LARGE:
@@ -456,22 +471,67 @@ class Views:
 
     # ----------------------------------------------------------- chatlar
 
-    async def chats(self, offset: int = 0) -> View:
+    async def chats(self, offset: int = 0, kind: str = "") -> View:
+        """Chatlar ro'yxati bo'limlarga ajratilgan: hammasi, shaxsiy, guruh, superguruh, kanal, bot, saqlangan.
+
+        Tepada bo'lim tugmalari (har birida chatlar soni), ostida tanlangan bo'lim ro'yxati.
+        """
+        try:
+            chat_type = ChatType(kind) if kind else None
+        except ValueError:
+            return View("Noma'lum chat turi.")
         async with self.db.read() as session:
-            page = await list_chats(session, limit=self.page_size, offset=offset)
-        if not page.rows:
+            counts = await chat_type_counts(session)
+            page = await list_chats(session, limit=self.page_size, offset=offset, chat_type=chat_type)
+        total = sum(c.archived for c in counts.values())
+        if total == 0 and not any(c.skipped for c in counts.values()):
             return View("Arxivda hali chat yo'q.")
-        lines = [f"💬 <b>Chatlar</b> — {offset + 1}–{offset + len(page.rows)}", ""]
-        numbered = []
+        tab_label = dict(CHAT_TABS)[chat_type]
+        shown = counts[chat_type].archived if chat_type is not None else total
+
+        builder = InlineKeyboardBuilder()
+        for tab_type, label in CHAT_TABS:
+            n = counts[tab_type].archived if tab_type is not None else total
+            mark = "✅ " if tab_type == chat_type else ""
+            builder.button(text=f"{mark}{label} {n}", callback_data=ChatsPage(offset=0, kind=tab_type or "").pack())
+        row_sizes = [4, 3]
+
+        lines = [f"💬 <b>Chatlar · {tab_label}</b>"]
+        if not page.rows:
+            lines.append("")
+            if offset > 0:
+                lines.append("Boshqa chat yo'q.")
+            else:
+                lines.append("Bu bo'limda arxivlangan chat yo'q.")
+                skipped = counts[chat_type].skipped if chat_type is not None else 0
+                if skipped and chat_type is not None:
+                    lines.append(
+                        f"Telegram'da {skipped} ta {CHAT_TYPES[chat_type]} chati bor, lekin arxivlanmaydi "
+                        f"(<code>{CHAT_TYPE_SETTING[chat_type]}=false</code> yoki CHAT_DENYLIST). Yoqish: .env da "
+                        f"<code>{CHAT_TYPE_SETTING[chat_type]}=true</code>, so'ng archiver'ni qayta ishga tushiring."
+                    )
+            builder.adjust(*row_sizes)
+            return View("\n".join(lines), builder.as_markup())
+
+        lines[0] += f" — {offset + 1}–{offset + len(page.rows)} / {shown}"
+        lines.append("")
         for index, row in enumerate(page.rows, start=offset + 1):
+            kind_part = f"{CHAT_TYPES.get(row.chat_type, row.chat_type)}, " if chat_type is None else ""
             lines.append(
                 f"<b>{index}.</b> {esc(shorten(chat_label(row.title, row.chat_id), 40))} "
-                f"({CHAT_TYPES.get(row.chat_type, row.chat_type)}, {MODES.get(row.archive_mode, '-')})\n"
+                f"({kind_part}{MODES.get(row.archive_mode, '-')})\n"
                 f"    {row.message_count} xabar · oxirgi {local_time(row.last_date, self.tz)} · <code>{row.chat_id}</code>"
             )
-            numbered.append((index, Conversation(chat_id=row.chat_id).pack()))
-        nav = _nav(offset, self.page_size, page.has_next, lambda o: ChatsPage(offset=o).pack())
-        return View(fit(lines), _keyboard(numbered, nav))
+            builder.button(text=str(index), callback_data=Conversation(chat_id=row.chat_id).pack())
+        count = len(page.rows)
+        row_sizes += [min(BUTTONS_PER_ROW, count - s) for s in range(0, count, BUTTONS_PER_ROW)]
+        nav = _nav(offset, self.page_size, page.has_next, lambda o: ChatsPage(offset=o, kind=kind).pack())
+        for text, data in nav:
+            builder.button(text=text, callback_data=data)
+        if nav:
+            row_sizes.append(len(nav))
+        builder.adjust(*row_sizes)
+        return View(fit(lines), builder.as_markup())
 
     async def chat(self, chat_id: int) -> View:
         async with self.db.read() as session:
@@ -753,9 +813,12 @@ class Views:
                 session, chat_id=cid, media_type=media_type, deleted=deleted, limit=self.page_size, offset=offset
             )
             chat = await session.get(Chat, cid) if cid is not None else None
+            kept = await deleted_media_counts(session, chat_id=cid, media_type=media_type) if deleted else None
         label = "🗑 O'chirilgan media" if deleted else (media_label(media_type) if media_type else "📎 Media")
         where = f" — {esc(chat_label(chat.title if chat else None, cid))}" if cid is not None else ""
         header = f"{label}{where}"
+        if kept is not None and (kept.saved or kept.lost):
+            header += f"\n<i>saqlab qolingan: {kept.saved} · saqlanmagan: {kept.lost}</i>"
         if not page.rows:
             empty = (
                 "O'chirilgan media yo'q — xabari o'chirilgan fayllar hali qayd etilmagan."
@@ -864,6 +927,12 @@ class Views:
         if media is None or message is None:
             return "Media topilmadi."
         if media.status is MediaStatus.UNAVAILABLE:
+            if message.deletion_status is not None:
+                return (
+                    "Xabar o'chirilgan va fayl undan oldin serverga saqlanmagan; Telegram'da boshqa nusxasi"
+                    " (forward) ham topilmadi. Keyingi safar shunday fayllar saqlanib qolishi uchun:"
+                    " MEDIA_RECENT_CACHE_H (docs/08-media.md)."
+                )
             return "Bu media Telegram'da endi mavjud emas."
         if media.status is MediaStatus.FAILED:
             return "Faylni yuklab bo'lmadi (Telegram xatosi). Keyinroq «📥 Yuklab yuborish» ni qayta bosing."

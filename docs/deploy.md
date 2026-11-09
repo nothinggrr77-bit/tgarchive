@@ -252,3 +252,6 @@ docker compose exec archiver python -m tgarchive status        # "Zaxira: oxirgi
 - Media: 50 MB gacha fayllar yuklanadi; kattalari ro‘yxatda ko‘rinadi ([08-media.md](08-media.md)). Disk to‘lib qolmasligi uchun `MEDIA_MIN_FREE_GB` (5 GB) himoyasi bor.
 - Zaxira faqat server diskida bo'lsa, disk nosozligidan himoya qilmaydi — haftada bir marta o'z kompyuteringizga ko'chiring ([10-backup-export.md](10-backup-export.md)).
 - Docker build va compose fayl ishlab chiqish kompyuterida (Windows'da Docker yo‘q) haqiqiy Docker bilan **ishga tushirilmagan**: image muhiti taqlid qilinib tekshirilgan (lock'dan o‘rnatish, Linux wheel'lari, `PYTHONPATH` rejimi, compose sintaksisi), `setup.sh` esa soxta `docker` bilan sinalgan. Serverdagi birinchi `bash scripts/setup.sh` — haqiqiy tekshiruv; muammo bo'lsa, chiqishini yuboring.
+
+
+

@@ -106,12 +106,44 @@ qoladi — ular «navbatda» bo‘lib ko‘rinmaydi.
 > Rejimni o‘zgartirsangiz (`true`↔`false`), oldin `skipped` bo‘lgan media keyingi ishga tushishda qayta
 > ko‘rib chiqiladi: `false` qilsangiz avtomatik yuklashga qaytadi.
 
+## O‘chirilgan xabarlar fayllari
+
+**Telegram faylni qanday saqlaydi.** Har bir rasm/hujjatning Telegram'da doimiy identifikatori bor:
+`id` + `access_hash` (+ `dc_id`). Arxiv ularni `media.tg_media_id`, `tg_access_hash`, `tg_dc_id`
+ustunlarida saqlaydi. Lekin yuklab olish uchun bular yetmaydi: har bir so‘rovga **`file_reference`**
+ham kerak — u vaqtinchalik, muddati o‘tadi (`FILE_REFERENCE_EXPIRED`) va rasmiy hujjatga ko‘ra faqat
+fayl oxirgi ko‘rilgan joydan (xabar, story va h.k.) qayta olinadi
+([core.telegram.org/api/file-references](https://core.telegram.org/api/file-references)). Xabar o‘chirilgach
+bu manba yo‘qoladi, shuning uchun Telegram o‘chirilgan xabarning faylini ishonchli tarzda bermaydi.
+Hujjatlanmagan eskirgan `file_reference` bilan urinishlar qo‘shilmagan — ular kafolatsiz.
+
+Shu sababli arxiv uchta ishonchli yo‘ldan foydalanadi:
+
+| Yo‘l | Qanday ishlaydi |
+|---|---|
+| **Oldindan saqlash** (`MEDIA_RECENT_CACHE_H`, sukut 48) | Talab bo‘yicha rejimda ham yangi xabarlarning fayllari darhol yuklanadi: realtime faylli xabarni yozishi bilan media worker uyg‘onadi (8 soniyalik kutishsiz). Xabar oyna ichida o‘chirilsa — fayl doimiy qoladi. O‘chirilmasa — xabar oynadan chiqqach va `MEDIA_ON_DEMAND_TTL_H` o‘tgach serverdan o‘chiriladi. |
+| **O‘chirilgan xabar fayli o‘chirilmaydi** | Muddati (TTL) o‘tgan fayllarni tozalash xabari o‘chirilgan fayllarga tegmaydi — Telegram ularni qayta bermaydi. |
+| **Boshqa nusxa** | Xabar Telegram'da yo‘q bo‘lsa, lekin xuddi shu fayl (bir xil Telegram ID) arxivdagi boshqa, o‘chirilmagan xabarda bo‘lsa (forward, qayta yuborilgan) — fayl o‘sha xabar orqali yuklanadi. Himoyalangan (noforwards) nusxalar manba sifatida ishlatilmaydi. |
+
+Botda: **/media → 🗑 O‘chirilgan** ro‘yxati sarlavhasida nechta fayl saqlab qolingani va nechtasi
+saqlanmagani ko‘rinadi. Xabar ekranida: saqlangan fayl — «📎 Faylni olish»; saqlanmagan —
+«📥 Nusxasini izlash» (Telegram'dagi boshqa nusxani qidiradi; topilmasa, aniq aytadi).
+
+Cheklovlar:
+- Oyna ichida ham, worker faylni yuklab ulgurishidan **oldin** o‘chirilgan xabar fayli (bir necha soniya)
+  saqlanmaydi, agar boshqa nusxasi bo‘lmasa.
+- `MEDIA_MAX_FILE_MB` dan katta fayllar oldindan saqlanmaydi.
+- Himoyalangan (noforwards) va bir marta ko‘riladigan media hech qachon yuklanmaydi.
+- Archiver o‘chiq turgan paytda kelib, o‘sha paytda o‘chirilgan xabarlar arxivga umuman tushmaydi.
+- `MEDIA_ON_DEMAND_TTL_H=0` bo‘lsa, oldindan saqlangan fayllar ham o‘chirilmaydi (disk o‘sib boradi).
+
 ## Disk nazorati
 
 | Sozlama | Sukut | Ma’nosi |
 |---|---|---|
 | `MEDIA_ON_DEMAND` | false | `true` — avtomatik yuklamaydi, faqat so‘ralganda (yuqoriga qarang) |
 | `MEDIA_ON_DEMAND_TTL_H` | 24 | So‘ralib yuklangan fayl shuncha soatdan keyin o‘chiriladi (0 = saqlanadi) |
+| `MEDIA_RECENT_CACHE_H` | 48 | Talab bo‘yicha rejimda ham shuncha soatdan yangi xabarlar fayli darhol yuklanadi (o‘chirilsa — qoladi); 0 = o‘chiq |
 | `MEDIA_MIN_FREE_GB` | 5 | Shundan kam bo‘sh joy qolsa — yuklash to‘xtaydi |
 | `MEDIA_MAX_TOTAL_GB` | bo‘sh | Barcha media uchun umumiy chegara (ixtiyoriy) |
 
@@ -173,5 +205,6 @@ chiqqan post faylini o‘chirish (umumiy faylni saqlab), xizmat rejimida yuklash
 
 - Telegram fayl hajmini oldindan aytadi; agar aytmasa, chegara yuklash paytida tekshiriladi.
 - Premium bo‘lmagan akkauntda Telegram yuklash tezligini cheklashi mumkin — katta navbat sekin tugaydi.
-- O‘chirilgan xabarning mediasi faqat oldin yuklangan bo‘lsa saqlanadi; o‘chirilgandan keyin `unavailable`.
+- O‘chirilgan xabarning mediasi faqat oldin yuklangan bo‘lsa (yoki Telegram'da boshqa nusxasi bo‘lsa) saqlanadi —
+  «O‘chirilgan xabarlar fayllari» bo‘limiga qarang.
 - Diskdagi fayllar shifrlanmagan (diskni shifrlash — server darajasida; zaxiralar 10-bosqichda shifrlanadi).

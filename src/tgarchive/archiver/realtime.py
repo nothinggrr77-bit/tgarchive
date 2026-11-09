@@ -97,6 +97,8 @@ class RealtimeArchiver:
         self.modes: dict[int, ArchiveMode | None] = {}
         self.stats: Counter[str] = Counter()
         self.last_event_at: datetime | None = None
+        # Yangi faylli xabar yozilganda chaqiriladi (media worker'ni uyg'otish) — xizmat beradi
+        self.on_media: Callable[[], None] | None = None
         self._handlers: list[tuple[Callable[[Any], Any], Any]] = []
 
     # ------------------------------------------------------------ Telethon
@@ -199,6 +201,9 @@ class RealtimeArchiver:
             if mode is ArchiveMode.WINDOW and outcome is SaveOutcome.CREATED:
                 pruned = await self._trim_window(session, record.chat_id)
         self.stats["edited" if outcome is SaveOutcome.EDITED else outcome.value] += 1
+        has_file = record.media is not None and record.media.media_type.is_file
+        if has_file and outcome in (SaveOutcome.CREATED, SaveOutcome.EDITED) and self.on_media is not None:
+            self.on_media()
         log.debug("realtime_message", chat_id=record.chat_id, message_id=record.message_id, outcome=outcome.value)
         if pruned:
             log.info("window_trimmed", chat_id=record.chat_id, pruned=len(pruned))

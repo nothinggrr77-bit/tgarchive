@@ -361,3 +361,17 @@ async def test_consumer_survives_a_bad_event(db: Database, tmp_path: Path) -> No
     assert rt.stats["errors"] == 1
     assert await ids(db, chat) == [2]
     assert rt.details()["queue"] == 0 and rt.details()["last_event_at"] is not None
+
+
+async def test_new_file_message_wakes_media_worker(db: Database, tmp_path: Path) -> None:
+    from tl_objects import document_media
+
+    tg = FakeTelegram()
+    tg.add_chat(user(), *private(2))
+    rt = await setup(tmp_path, db, tg)
+    woke: list[int] = []
+    rt.on_media = lambda: woke.append(1)
+    await rt.process(MessageEvent(message(3, peer=types.PeerUser(ALI_ID), message="matn")))
+    assert woke == []  # faylsiz xabar — uyg'otmaydi
+    await rt.process(MessageEvent(message(4, peer=types.PeerUser(ALI_ID), media=document_media([], doc_id=900))))
+    assert woke == [1]

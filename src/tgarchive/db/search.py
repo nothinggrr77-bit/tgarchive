@@ -300,22 +300,50 @@ def _chat_counts():
     )
 
 
-async def list_chats(session: AsyncSession, *, limit: int = 10, offset: int = 0) -> Page:
-    """Arxivlanayotgan chatlar, oxirgi xabar bo'yicha (eng faoli birinchi)."""
+async def list_chats(
+    session: AsyncSession, *, limit: int = 10, offset: int = 0, chat_type: ChatType | None = None
+) -> Page:
+    """Arxivlanayotgan chatlar, oxirgi xabar bo'yicha (eng faoli birinchi).
+
+    ``chat_type`` berilsa — faqat shu turdagi chatlar (shaxsiy, guruh, kanal, bot ...).
+    """
     counts = _chat_counts()
-    result = await session.execute(
+    stmt = (
         select(Chat, counts.c.n, counts.c.last)
         .outerjoin(counts, counts.c.chat_id == Chat.chat_id)
         .where(Chat.archive_mode.in_(ARCHIVED))
-        .order_by(counts.c.last.desc().nulls_last(), Chat.chat_id)
-        .limit(limit + 1)
-        .offset(offset)
+    )
+    if chat_type is not None:
+        stmt = stmt.where(Chat.chat_type == chat_type)
+    result = await session.execute(
+        stmt.order_by(counts.c.last.desc().nulls_last(), Chat.chat_id).limit(limit + 1).offset(offset)
     )
     rows = [
         ChatRow(chat.chat_id, chat.title, chat.chat_type, chat.archive_mode, int(n or 0), last)
         for chat, n, last in result
     ]
     return Page(rows[:limit], offset, len(rows) > limit)
+
+
+@dataclass(frozen=True, slots=True)
+class ChatTypeCount:
+    archived: int = 0  # arxivlanayotgan (to'liq yoki oxirgi postlar)
+    skipped: int = 0  # Telegram'da bor, lekin siyosat bo'yicha arxivlanmaydi
+
+
+async def chat_type_counts(session: AsyncSession) -> dict[ChatType, ChatTypeCount]:
+    """Har bir chat turi bo'yicha nechta chat arxivlanadi va nechtasi arxivlanmaydi."""
+    archived: dict[ChatType, int] = {}
+    skipped: dict[ChatType, int] = {}
+    rows = await session.execute(
+        select(Chat.chat_type, Chat.archive_mode, func.count()).group_by(Chat.chat_type, Chat.archive_mode)
+    )
+    for chat_type, mode, n in rows:
+        if mode in ARCHIVED:
+            archived[chat_type] = archived.get(chat_type, 0) + int(n)
+        elif mode is ArchiveMode.SKIP:
+            skipped[chat_type] = skipped.get(chat_type, 0) + int(n)
+    return {t: ChatTypeCount(archived.get(t, 0), skipped.get(t, 0)) for t in ChatType}
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,6 +449,29 @@ async def list_media(
         for media, message, title in await session.execute(stmt)
     ]
     return Page(rows[:limit], offset, len(rows) > limit)
+
+
+@dataclass(frozen=True, slots=True)
+class DeletedMediaCounts:
+    saved: int  # xabari o'chirilgan, fayli arxivda bor
+    lost: int  # xabari o'chirilgan, fayli o'chirilishidan oldin saqlanmagan
+
+
+async def deleted_media_counts(
+    session: AsyncSession, *, chat_id: int | None = None, media_type: MediaType | None = None
+) -> DeletedMediaCounts:
+    """O'chirilgan xabarlar mediasidan nechtasi saqlab qolingan va nechtasi yo'qolgan."""
+    stmt = (
+        select(Media.status == MediaStatus.DONE, func.count())
+        .join(Message, Message.id == Media.message_pk)
+        .where(Media.superseded_at.is_(None), Message.deletion_status.is_not(None))
+    )
+    if chat_id is not None:
+        stmt = stmt.where(Message.chat_id == chat_id)
+    if media_type is not None:
+        stmt = stmt.where(Media.media_type == media_type)
+    counts = {bool(done): int(n) for done, n in await session.execute(stmt.group_by(Media.status == MediaStatus.DONE))}
+    return DeletedMediaCounts(counts.get(True, 0), counts.get(False, 0))
 
 
 async def message_position(session: AsyncSession, pk: int) -> int | None:
